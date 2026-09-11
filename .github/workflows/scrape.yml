@@ -2,8 +2,14 @@ name: Nightly snapshot
 
 on:
   schedule:
-    - cron: "0 3 * * *"   # 03:00 UTC nightly
-  workflow_dispatch: {}    # manual trigger
+    - cron: "0 3 * * *"   # 03:00 UTC nightly — fast delta
+    - cron: "0 3 * * 0"   # 03:00 UTC Sundays — full baseline
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "full (enumerate everything) or nightly (delta over corpus)"
+        required: false
+        default: "nightly"
 
 permissions:
   contents: write
@@ -17,7 +23,7 @@ concurrency:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 200
     steps:
       - uses: actions/checkout@v4
 
@@ -29,7 +35,21 @@ jobs:
         run: python3 scraper/test_stats.py
 
       - name: Scrape and build snapshot
-        run: python3 scraper/scrape.py --out site/data/snapshot.json
+        env:
+          INPUT_MODE: ${{ github.event.inputs.mode }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          # Scheduled Sunday 03:00 + manual "full" => full baseline; else nightly delta
+          if [ "$EVENT_NAME" = "schedule" ] && [ "$(date -u +%u)" = "7" ] || [ "$INPUT_MODE" = "full" ]; then
+            python3 scraper/scrape.py --out site/data/snapshot.json --workers 2
+          else
+            # first run has no corpus: fall back to full automatically
+            if [ -f site/data/ships.ndjson ]; then
+              python3 scraper/scrape.py --nightly --out site/data/snapshot.json --workers 2
+            else
+              python3 scraper/scrape.py --out site/data/snapshot.json --workers 2
+            fi
+          fi
 
       - name: Upload full corpus artifact
         uses: actions/upload-artifact@v4
@@ -38,11 +58,11 @@ jobs:
           path: site/data/ships.ndjson
           retention-days: 30
 
-      - name: Commit updated snapshot
+      - name: Commit updated snapshot + corpus
         run: |
           git config user.name "queue-bot"
           git config user.email "actions@github.com"
-          git add site/data/snapshot.json
+          git add site/data/snapshot.json site/data/ships.ndjson
           if git diff --staged --quiet; then
             echo "no changes"
           else

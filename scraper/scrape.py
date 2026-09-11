@@ -36,19 +36,23 @@ sys.path.insert(0, HERE)
 import stats  # noqa: E402
 
 BASE = "https://macondo.hackclub.com/api"
-UA = "macondo-queue-checker/0.1 (+https://github.com/; nightly snapshot; contact via GitHub)"
-SPACING = 1.1          # seconds between requests (~54/min < 60/min limit)
+UA = "macondo-queue-checker/0.1 (+https://github.com/AbkaiFulingga/macondo-queue-checker; nightly snapshot; contact via GitHub)"
+SPACING = 1.1          # seconds between requests, single worker (~54/min < 60/min limit)
 LAST_PEEK_FRONTIER = 30000  # project IDs above this are assumed nonexistent
 
 
 class Fetcher:
-    def __init__(self, spacing=SPACING, dry=False, quiet=False):
-        self.spacing = spacing
+    def __init__(self, spacing=None, dry=False, quiet=False, workers=1):
+        self.workers = max(1, workers)
+        # shared throttle keeps TOTAL request rate under the API limit:
+        # spacing shrinks as workers are added so workers * rate <= ~1.8 req/s
+        self.spacing = spacing if spacing is not None else min(SPACING, 1.1 / self.workers)
         self.dry = dry
         self.quiet = quiet
         self.last = 0.0
         self.n_ok = 0
         self.n_err = 0
+        self.lock = None  # created lazily under threading
 
     def log(self, msg):
         if not self.quiet:
@@ -59,15 +63,10 @@ class Fetcher:
         if wait > 0:
             time.sleep(wait)
 
-    def get_json(self, path, retries=3):
-        """GET {BASE}{path} -> (status, parsed_json_or_None). Throttled."""
-        if self.dry:
-            return 204, None
-        self._throttle()
-        self.last = time.monotonic()
-        url = BASE + path
+    def _get_once(self, path, retries):
+        req = urllib.request.Request(BASE + path,
+                                     headers={"User-Agent": UA, "Accept": "application/json"})
         for attempt in range(retries):
-            req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
             try:
                 with urllib.request.urlopen(req, timeout=30) as r:
                     body = r.read()
@@ -93,6 +92,37 @@ class Fetcher:
                 self.log(f"  network error on {path}: {e}")
                 return 0, None
         return 0, None
+
+    def get_json(self, path, retries=3):
+        """GET {BASE}{path} -> (status, parsed_json_or_None). Throttled; thread-safe
+        when a threading lock is attached (see map_workers)."""
+        if self.dry:
+            return 204, None
+        if getattr(self, "lock", None):
+            with self.lock:
+                self._throttle()
+                self.last = time.monotonic()
+        else:
+            self._throttle()
+            self.last = time.monotonic()
+        return self._get_once(path, retries)
+
+
+def map_workers(fetch, fn, items, desc=""):
+    """Run fn(item) over items with fetch.workers threads, sharing one throttle.
+    Results returned in input order; errors are fn's responsibility (return None)."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    fetch.lock = threading.Lock()
+    out = [None] * len(items)
+    with ThreadPoolExecutor(max_workers=fetch.workers) as ex:
+        futures = {ex.submit(fn, it): i for i, it in enumerate(items)}
+        for fut, i in futures.items():
+            out[i] = fut.result()
+    if desc and not fetch.quiet:
+        done = sum(1 for r in out if r is not None)
+        print(f"  {desc}: {done}/{len(items)} ok", file=sys.stderr, flush=True)
+    return out
 
 
 # ------------------------------------------------------------------ helpers
@@ -145,12 +175,19 @@ def projects_from_users(fetch, usernames):
     pids = set()
     meta = {}
     by_user = {}
-    for u in usernames:
+
+    def one(u):
         code, data = fetch.get_json(f"/users/{urllib.parse.quote(u)}")
         if code != 200 or not isinstance(data, dict):
-            continue
+            return None
         ups = data.get("projects") or []
         m = project_meta_from_user(ups, u)
+        return u, m
+
+    for res in map_workers(fetch, one, usernames, desc="user lookups"):
+        if not res:
+            continue
+        u, m = res
         meta.update(m)
         ids = set(m)
         pids |= ids
@@ -206,14 +243,18 @@ def scan_id_range(fetch, lo, hi):
     """Probe every project ID in [lo, hi]; return (pids_with_ships, ships)."""
     pids = set()
     ships = []
-    for pid in range(lo, hi + 1):
+
+    def one(pid):
         code, data = fetch.get_json(f"/projects/{pid}/ships")
         if code != 200 or not data:
-            continue
-        pids.add(pid)
-        for s in data:
-            s["pid"] = pid
-            ships.append(s)
+            return None
+        return [(s | {"pid": pid}) for s in data]
+
+    results = map_workers(fetch, one, range(lo, hi + 1), desc=f"range {lo}..{hi}")
+    for chunk in results:
+        if chunk:
+            pids.add(chunk[0]["pid"])
+            ships.extend(chunk)
     return pids, ships
 
 
@@ -222,22 +263,25 @@ def scan_id_range(fetch, lo, hi):
 
 def fetch_all_ships(fetch, pids, meta):
     """Fetch /projects/{pid}/ships for every discovered project; enrich."""
-    all_ships = []
-    for i, pid in enumerate(sorted(pids)):
-        if i and i % 200 == 0:
-            fetch.log(f"  ships {i}/{len(pids)}...")
+    def one(pid):
         code, data = fetch.get_json(f"/projects/{pid}/ships")
         if code != 200 or not data:
-            continue
+            return []
         m = meta.get(pid) or {}
+        out = []
         for s in data:
             s["pid"] = pid
-            s.setdefault("name", m.get("name"))
-            s.setdefault("owner", m.get("owner"))
-            s.setdefault("level", m.get("level"))
-            s.setdefault("type", m.get("type"))
-            s.setdefault("hours", s.get("hackatime_hours"))
-            all_ships.append(s)
+            # explicit assignment: fresh /ships payload has none of these keys
+            s["name"] = m.get("name")
+            s["owner"] = m.get("owner")
+            s["level"] = m.get("level")
+            s["type"] = m.get("type")
+            s["hours"] = s.get("hackatime_hours")
+            out.append(s)
+        return out
+
+    results = map_workers(fetch, one, sorted(pids), desc="ships")
+    all_ships = [s for chunk in results if chunk for s in chunk]
     return all_ships
 
 
@@ -251,18 +295,107 @@ def dedupe_ships(all_ships):
 # ------------------------------------------------------------------- main
 
 
+def enrich_with_project_meta(fetch, ships):
+    """Fill name/level/type/owner on ship records via /projects/{pid}.
+    Only pids missing metadata are fetched (~1 req each, still polite)."""
+    need = {s.get("pid") for s in ships
+            if s.get("status") in ("under_review", "pending_second_pass",
+                                   "pending_fraud_review")
+            and not s.get("name")}
+    if not need:
+        return ships
+
+    def one(pid):
+        code, data = fetch.get_json(f"/projects/{pid}")
+        if code != 200 or not isinstance(data, dict):
+            return None
+        return pid, {
+            "name": data.get("name"),
+            "level": str(data.get("level")) if data.get("level") else None,
+            "type": data.get("type"),
+            "owner": (data.get("owner") or {}).get("username") if isinstance(data.get("owner"), dict) else None,
+            "hours": data.get("public_total_hours"),
+        }
+
+    fetched = {}
+    for res in map_workers(fetch, one, sorted(need), desc="meta enrichment"):
+        if res:
+            fetched[res[0]] = res[1]
+    for s in ships:
+        m = fetched.get(s.get("pid"))
+        if m:
+            # fill only when missing OR null (setdefault skips null-valued keys)
+            for key in ("name", "level", "type", "owner"):
+                if not s.get(key):
+                    s[key] = m[key]
+    return ships
+
+
+def load_corpus(path):
+    ships = []
+    if os.path.exists(path):
+        with open(path) as f:
+            for line in f:
+                if line.strip():
+                    ships.append(json.loads(line))
+    return ships
+
+
 def run(args):
-    fetch = Fetcher(dry=args.dry_run, quiet=args.quiet)
+    fetch = Fetcher(dry=args.dry_run, quiet=args.quiet, workers=args.workers)
     t0 = time.time()
+    out_path = args.out or os.path.join(HERE, "..", "site", "data", "snapshot.json")
+    out_path = os.path.abspath(out_path)
+    corpus_path = os.path.join(os.path.dirname(out_path), "ships.ndjson")
+    baseline = load_corpus(corpus_path)
+    baseline_by_pid = {}
+    for s in baseline:
+        baseline_by_pid.setdefault(s.get("pid"), []).append(s)
 
     # ---- discovery
     if args.ids:
         lo_s, hi_s = args.ids.split(":")
         lo, hi = int(lo_s), int(hi_s)
         fetch.log(f"scanning explicit ID range {lo}..{hi}")
-        pids, ships = scan_id_range(fetch, lo, hi)
-        all_ships = ships
+        pids, all_ships = scan_id_range(fetch, lo, hi)
         meta = {}
+    elif args.nightly and baseline:
+        # Fast nightly path (a few hundred requests): refresh only what can
+        # have changed — waiting ships, the recent-ID window up to the live
+        # frontier, and the shipped gallery (catches resubmits + fresh
+        # decisions). Decided ships below the window are frozen history;
+        # reuse them from the baseline corpus.
+        fetch.log(f"nightly delta over baseline ({len(baseline)} ships)")
+        waiting_pids = {s.get("pid") for s in baseline
+                        if s.get("status") in ("under_review", "pending_second_pass",
+                                               "pending_fraud_review")}
+        gpids, gmeta = projects_from_gallery(fetch)
+        meta = gmeta
+        # recent-ID window: from just below the newest baseline pid up to the
+        # LIVE frontier (climb until dead rungs; typically a few hundred IDs)
+        newest = max((s.get("pid") or 0) for s in baseline)
+        lo = max(1, newest - 100)
+        frontier = find_frontier(fetch, max(lo, newest))
+        fetch.log(f"recent window {lo}..{frontier}")
+        spids, sships = (scan_id_range(fetch, lo, frontier) if frontier >= lo else (set(), []))
+        refresh = waiting_pids | set(spids)
+        fetch.log(f"refreshing {len(refresh)} projects (waiting={len(waiting_pids)}, recent-window hits={len(spids)})")
+        fresh = fetch_all_ships(fetch, sorted(refresh), meta)
+        # merge: fresh wins for refreshed pids; frozen baseline for everything else
+        fresh_by_pid = {}
+        for s in fresh:
+            fresh_by_pid.setdefault(s.get("pid"), []).append(s)
+        all_ships = []
+        for pid, ships in baseline_by_pid.items():
+            all_ships.extend(fresh_by_pid.pop(pid, ships))
+        for ships in fresh_by_pid.values():
+            all_ships.extend(ships)
+        # new gallery projects not in baseline
+        new_gallery = [p for p in gpids if p not in baseline_by_pid and p not in fresh_by_pid]
+        if new_gallery:
+            fetch.log(f"+ {len(new_gallery)} new gallery projects")
+            all_ships += fetch_all_ships(fetch, new_gallery, meta)
+        pids = {s.get("pid") for s in all_ships}
     else:
         usernames = discover_users(fetch, args.max_users)
         fetch.log(f"discovered {len(usernames)} users")
@@ -288,11 +421,19 @@ def run(args):
         if todo:
             fetch.log(f"fetching ships for {len(todo)} out-of-range projects")
             all_ships += fetch_all_ships(fetch, todo, meta)
-        # ensure ships for range-scanned projects that had empty ship lists
-        # are represented (they were already fetched in the scan itself)
+        # seed-baseline ships from any earlier run supplement whatever the
+        # user/gallery paths didn't re-see this time (deleted users etc.)
+        if baseline:
+            seen_pids = {s.get("pid") for s in all_ships}
+            for pid, ships in baseline_by_pid.items():
+                if pid not in seen_pids:
+                    all_ships.extend(ships)
 
     all_ships = dedupe_ships(all_ships)
     fetch.log(f"unique ships: {len(all_ships)}")
+    # waiting ships without metadata get one /projects/{pid} each so the
+    # queue table shows names/levels/owners
+    all_ships = enrich_with_project_meta(fetch, all_ships)
 
     # ---- snapshot
     snap = stats.build_snapshot(all_ships)
@@ -303,12 +444,10 @@ def run(args):
         "elapsed_s": round(time.time() - t0, 1),
     }
 
-    out_path = args.out or os.path.join(HERE, "..", "site", "data", "snapshot.json")
-    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:
         json.dump(snap, f, separators=(",", ":"))
-    # full corpus as a sidecar for diffing/debugging
-    corpus_path = os.path.join(os.path.dirname(os.path.abspath(out_path)), "ships.ndjson")
+    # full corpus as a sidecar for diffing/debugging AND the next nightly delta
     with open(corpus_path, "w") as f:
         for s in all_ships:
             f.write(json.dumps(s, separators=(",", ":")) + "\n")
@@ -345,6 +484,10 @@ def main():
     ap.add_argument("--out", type=str, default=None, help="output snapshot path")
     ap.add_argument("--offline", action="store_true", help="build from seed corpus, no network")
     ap.add_argument("--dry-run", action="store_true", help="enumerate but do not fetch")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="concurrent fetch workers sharing one throttle (keeps total rate under limits)")
+    ap.add_argument("--nightly", action="store_true",
+                    help="fast delta mode: refresh waiting ships + recent window only (needs ships.ndjson corpus)")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 

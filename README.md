@@ -1,5 +1,8 @@
 # Macondo tracker — project 906 / ship 7520
 
+**Live site: https://abkaifulingga.github.io/macondo-queue-checker/**
+**Repo: https://github.com/AbkaiFulingga/macondo-queue-checker**
+
 This workspace holds two things:
 
 1. **`macondo_check.sh`** — personal CLI tracker for your own project.

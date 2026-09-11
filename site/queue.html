@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Full queue — Macondo Queue Checker</title>
+<link rel="stylesheet" href="style.css">
+<script src="eta.js" defer></script>
+<script src="queue.js" defer></script>
+</head>
+<body>
+<header>
+  <h1><a href="./">Macondo Queue Checker</a></h1>
+  <nav>
+    <a href="./">Dashboard</a>
+    <a href="queue.html">Full queue</a>
+    <a href="how.html">How it works</a>
+  </nav>
+</header>
+<main>
+  <section class="card">
+    <h2>The full review queue</h2>
+    <p class="muted small">
+      Every ship currently waiting for review, reconstructed from public Macondo data.
+      Sorted by submission age. <strong>This is not reviewer order</strong> — reviewers
+      claim ships individually, and claim state is not public. Rank #1 = oldest.
+    </p>
+    <div class="q-controls">
+      <input id="q-filter" type="text" placeholder="Filter by project or user…">
+      <select id="q-level">
+        <option value="">All levels</option>
+        <option value="1">Level 1</option>
+        <option value="2">Level 2</option>
+        <option value="3">Level 3</option>
+        <option value="4">Level 4</option>
+      </select>
+      <select id="q-sort">
+        <option value="rank">Sort: oldest first</option>
+        <option value="newest">Sort: newest first</option>
+        <option value="hours">Sort: most hours</option>
+      </select>
+    </div>
+    <div id="queue-table"></div>
+  </section>
+</main>
+</body>
+</html>

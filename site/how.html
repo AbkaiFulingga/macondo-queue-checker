@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How it works — Macondo Queue Checker</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1><a href="./">Macondo Queue Checker</a></h1>
+  <nav>
+    <a href="./">Dashboard</a>
+    <a href="queue.html">Full queue</a>
+    <a href="how.html">How it works</a>
+  </nav>
+</header>
+<main>
+
+<section class="card">
+  <h2>Where the data comes from</h2>
+  <p>Everything here is built from Macondo's <strong>public API</strong> — the same
+  endpoints any visitor's browser uses on project pages. No login, no API key,
+  nothing private.</p>
+  <ul class="clean">
+    <li><code>/api/projects/{id}</code> — project record, including live ship status</li>
+    <li><code>/api/projects/{id}/ships</code> — every ship with submission date, decision date, outcome, hours, reviewer message</li>
+    <li><code>/api/users/{username}</code> — a user's public project list</li>
+    <li><code>/api/explore/*</code> — public project gallery and people directory (used for enumeration)</li>
+  </ul>
+  <p class="muted small">A nightly job enumerates users → projects → ships at a polite
+  rate (~1 request/second, honoring rate limits) and commits a snapshot. Your own
+  project lookup happens live in your browser, so the moment your status changes,
+  you see it — everything else is at most ~24h old, and labeled with its timestamp.</p>
+</section>
+
+<section class="card">
+  <h2>The review pipeline, from public data</h2>
+  <p>A "ship" (project submission) moves through stages:</p>
+  <ol>
+    <li><strong>In review</strong> — sits in the reviewer queue. Reviewers <em>claim</em>
+      ships individually (like a shared inbox, not a conveyor belt). Whether yours is
+      currently claimed is <strong>not public</strong>.</li>
+    <li><strong>Fraud check</strong> (sometimes) — a ship may be escalated to the fraud
+      squad, which checks an external fraud API and returns a verdict asynchronously.
+      Shown publicly only as a distinct status while it's pending.</li>
+    <li><strong>Second pass</strong> — once a reviewer approves, the ship waits on a
+      final double-check by an admin ("ARI") before the reward is released. Your project
+      shows "accepted — waiting on a final second-pass check" here.</li>
+    <li><strong>Shipped</strong> — reward released, project public on the gallery.</li>
+  </ol>
+  <p>Other outcomes: <strong>needs changes</strong> (revise and resubmit — a new ship)
+  and <strong>rejected</strong> (sometimes fraud-related, which the public ship record
+  marks).</p>
+</section>
+
+<section class="card">
+  <h2>How the estimate is computed</h2>
+  <p>Three signals, blended:</p>
+  <ul>
+    <li><strong>Queue position</strong> — your ship's age rank among all waiting ships,
+      from the snapshot. (Guidance, not a line number — claims jump around.)</li>
+    <li><strong>Front velocity</strong> — recent decisions were on ships submitted
+      around date X; the front advances at some submissions-per-day; the distance from
+      X to your submission date ÷ that rate ≈ your wait.</li>
+    <li><strong>Cohort survival</strong> — of ships submitted in your week, what
+      fraction were decided within 7/14/30 days.</li>
+  </ul>
+  <p>That's why we show a <strong>range with a median</strong>, never a single date.</p>
+</section>
+
+<section class="card">
+  <h2>What this can never know — accuracy, honestly</h2>
+  <ul>
+    <li><strong>Whether a reviewer has already claimed your ship.</strong> Claim/assignment
+      state exists only in the reviewer-only interface. Two identical "in review" ships
+      can be in completely different situations.</li>
+    <li><strong>Reviewer availability.</strong> Throughput varies ~4× between active
+      weeks and quiet weeks; we use the trailing 14 days.</li>
+    <li><strong>Fraud-review detours.</strong> Escalation and verdict timing are external.</li>
+  </ul>
+  <p>Estimates are <strong>distributions, not promises</strong>. The fast-lane stat
+  (~16% of ships decided within 24h) is real and worth remembering: any ship can be
+  claimed any day, regardless of the queue math.</p>
+  <p class="muted small">If Macondo ever exposed a claimed/unclaimed flag publicly,
+  the error bars on these estimates would shrink dramatically. This site is, in part,
+  a demonstration that the public data is rich enough to want it.</p>
+</section>
+
+<section class="card">
+  <h2>Etiquette</h2>
+  <p>The nightly snapshot costs Macondo's API ~1,500 polite requests total (cached
+  output served to every visitor after that). Each project lookup is 2 requests,
+  live. If you use this code, keep the rate limits and the User-Agent contact
+  string — don't be the reason an endpoint closes.</p>
+</section>
+
+</main>
+</body>
+</html>

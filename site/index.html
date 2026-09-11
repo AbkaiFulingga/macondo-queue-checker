@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Macondo Queue Checker — how long until your project gets reviewed?</title>
+<meta name="description" content="Check your Macondo project's review queue position and estimated review time, with live status and pipeline statistics from public data.">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+<script src="eta.js" defer></script>
+<script src="charts.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<header>
+  <h1><a href="./">Macondo Queue Checker</a></h1>
+  <nav>
+    <a href="./" id="nav-home">Dashboard</a>
+    <a href="queue.html">Full queue</a>
+    <a href="how.html">How it works</a>
+  </nav>
+</header>
+
+<main>
+  <!-- ================= SEARCH ================= -->
+  <section class="search-wrap card">
+    <h2>When will my project get reviewed?</h2>
+    <p class="muted">Paste your project URL or ID (or your username to see all your projects).</p>
+    <form id="search-form">
+      <input id="search-input" type="text" placeholder="macondo.hackclub.com/projects/906 — or just 906 — or your username"
+             autocomplete="off" spellcheck="false" autofocus>
+      <button type="submit">Check</button>
+    </form>
+    <div id="search-msg" class="muted small" role="status"></div>
+  </section>
+
+  <!-- ================= RESULT CARD ================= -->
+  <section id="result" class="hidden">
+    <div class="card" id="result-banner"></div>
+
+    <div class="card" id="stepper-card">
+      <h2>Review pipeline</h2>
+      <div id="stepper" class="stepper"></div>
+      <p class="muted small" id="stepper-note"></p>
+    </div>
+
+    <div class="grid2">
+      <div class="card" id="eta-card">
+        <h2>Estimated review window</h2>
+        <div id="eta-body"></div>
+      </div>
+      <div class="card" id="file-card">
+        <h2>Your file — what a reviewer sees</h2>
+        <div id="file-body"></div>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="card" id="cohort-card">
+        <h2>Ships submitted your week — what happened to them</h2>
+        <div id="cohort-body"></div>
+      </div>
+      <div class="card" id="similar-card">
+        <h2>Similar recent decisions</h2>
+        <div id="similar-body"></div>
+      </div>
+    </div>
+
+    <div class="card hidden" id="gold-card">
+      <h2>Gold if approved (estimate)</h2>
+      <div id="gold-body"></div>
+    </div>
+
+    <div class="card hidden" id="all-projects-card">
+      <h2 id="all-projects-title">All projects</h2>
+      <div id="all-projects-body"></div>
+    </div>
+  </section>
+
+  <!-- ================= DASHBOARD ================= -->
+  <section id="dashboard">
+    <div class="stat-row" id="stat-cards"></div>
+
+    <div class="card">
+      <h2>Queue depth over time</h2>
+      <p class="muted small">Reconstructed from every ship's public submission and decision dates. A ship is "in queue" from submission until decision (or today).</p>
+      <canvas id="chart-depth" height="110"></canvas>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h2>Decisions per day</h2>
+        <p class="muted small">Review throughput. Bursts mean reviewer pushes; flat means stall.</p>
+        <canvas id="chart-decisions" height="140"></canvas>
+      </div>
+      <div class="card">
+        <h2>Latency: days from submission to decision</h2>
+        <p class="muted small">The bimodal shape is the story: a fast claim lane (hours) and the backlog lane (weeks).</p>
+        <canvas id="chart-latency" height="140"></canvas>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h2>Survival curve — % decided vs days waiting</h2>
+        <p class="muted small">Of all ships ever submitted, the fraction decided within N days. Waiting ships count as still waiting at their current age.</p>
+        <canvas id="chart-survival" height="140"></canvas>
+      </div>
+      <div class="card">
+        <h2>Arrivals per week</h2>
+        <p class="muted small">New ships submitted. Rising arrivals = growing queue.</p>
+        <canvas id="chart-arrivals" height="140"></canvas>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h2>Approval rates</h2>
+        <p class="muted small">Among decided ships. Historical pattern, not a promise.</p>
+        <div id="approval-body"></div>
+      </div>
+      <div class="card">
+        <h2>Queue composition</h2>
+        <p class="muted small">Waiting ships by level, and the hours distribution.</p>
+        <div id="composition-body"></div>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h2>Recent decisions</h2>
+        <p class="muted small">Latest 20 decided ships (all public data).</p>
+        <div id="recent-body"></div>
+      </div>
+      <div class="card">
+        <h2>Records</h2>
+        <div id="records-body"></div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p class="muted small">
+      Built from Macondo's public API, nightly. Not affiliated with Hack Club / Macondo.
+      Queue data is a reconstruction — reviewer claim order is not public.
+      Your project status is fetched live; everything else is snapshot data
+      <span id="snapshot-age">…</span>.
+    </p>
+    <p class="muted small"><a href="how.html">How this works &amp; accuracy</a> · <a href="queue.html">Full queue table</a></p>
+  </footer>
+</main>
+</body>
+</html>

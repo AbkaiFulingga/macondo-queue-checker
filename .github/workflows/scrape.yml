@@ -1,0 +1,69 @@
+name: Nightly snapshot
+
+on:
+  schedule:
+    - cron: "0 3 * * *"   # 03:00 UTC nightly
+  workflow_dispatch: {}    # manual trigger
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run stats tests
+        run: python3 scraper/test_stats.py
+
+      - name: Scrape and build snapshot
+        run: python3 scraper/scrape.py --out site/data/snapshot.json
+
+      - name: Upload full corpus artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ships-ndjson
+          path: site/data/ships.ndjson
+          retention-days: 30
+
+      - name: Commit updated snapshot
+        run: |
+          git config user.name "queue-bot"
+          git config user.email "actions@github.com"
+          git add site/data/snapshot.json
+          if git diff --staged --quiet; then
+            echo "no changes"
+          else
+            git commit -m "nightly snapshot $(date -u +%Y-%m-%d)"
+            git push
+          fi
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: scrape
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

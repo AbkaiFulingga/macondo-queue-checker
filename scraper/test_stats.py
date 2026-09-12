@@ -386,6 +386,87 @@ def test_merge_ships_preserves_baseline():
 # ------------------------------------------------------- submission cutoff
 
 
+def test_find_frontier_advances_past_a_rung_boundary():
+    """Regression: the climb probed rungs starting at known_max + 500, so it
+    could only report a multiple of 500 above the known max. Real projects
+    created just above it (ids 17488..17526 with the max known as 17451) were
+    therefore invisible to every nightly run and to the full sweep."""
+    import scrape
+
+    live = set(range(1, 17452)) | {17488, 17490, 17491, 17502, 17503, 17524, 17526}
+    live |= {17452 + i for i in range(0, 80) if i % 5}      # interleaved gaps
+
+    class F:
+        workers, quiet = 1, True
+        def __init__(self): self.calls = 0
+        def get_json(self, path):
+            self.calls += 1
+            pid = int(path.split("/")[2])
+            return (200, []) if pid in live else (404, None)
+
+    f = F()
+    got = scrape.find_frontier(f, 17451)
+    assert got == max(live), (got, max(live))
+    assert f.calls < 200, f.calls        # still cheap
+
+    # a bootstrap climb from very little must still reach the top
+    f2 = F()
+    assert scrape.find_frontier(f2, 1) == max(live)
+
+
+def test_find_frontier_tolerates_interleaved_deletions():
+    """Deleted projects are ~30% of the ID space, so short dead runs are
+    meaningless -- a naive 'stop after 3 consecutive 404s' would stop far below
+    the real top. Gaps here are 4 IDs wide."""
+    import scrape
+    live = set(range(1, 1100)) | {1105, 1110}   # 1101-1104 and 1106-1109 dead
+
+    class F:
+        workers, quiet = 1, True
+        def get_json(self, path):
+            pid = int(path.split("/")[2])
+            return (200, []) if pid in live else (404, None)
+
+    assert scrape.find_frontier(F(), 800) == 1110
+
+
+def test_find_frontier_long_gap_needs_the_full_sweep_budget():
+    """A missing-ID run longer than the walk budget ends the walk, so anything
+    live beyond such a gap waits for the weekly full sweep -- which is why that
+    sweep gets a far larger budget. Both halves are pinned here so the trade-off
+    stays deliberate."""
+    import scrape
+    live = set(range(1, 900)) | {1100}    # 901..1099 all deleted (199-wide gap)
+
+    class F:
+        workers, quiet = 1, True
+        def get_json(self, path):
+            pid = int(path.split("/")[2])
+            return (200, []) if pid in live else (404, None)
+
+    # nightly budget: stops in the gap, does not reach 1100 this run
+    assert scrape.find_frontier(F(), 800) == 899
+    # weekly full-sweep budget: walks past it and finds the project
+    assert scrape.find_frontier(F(), 800, dead_run=scrape.FRONTIER_DEAD_RUN_FULL) == 1100
+    assert scrape.FRONTIER_DEAD_RUN_FULL > scrape.FRONTIER_DEAD_RUN
+
+
+def test_default_cutoff_is_macondo_local_midnight():
+    """The cutoff is the end of 31 Aug in the timezone Macondo operates in (US
+    Eastern), which is 2026-09-01 04:00Z -- the instant the submission rush
+    before the gate closed collapses. Pinned so the boundary cannot drift."""
+    assert stats.DEFAULT_CUTOFF_TZ == "America/New_York"
+    assert stats.cutoff_epoch(stats.DEFAULT_CUTOFF_DATE, stats.DEFAULT_CUTOFF_TZ) \
+        == stats.parse_ts("2026-09-01T04:00:00Z")
+    # 03:59Z on Sep 1 is still Aug 31 to Macondo; 04:01Z is not
+    ships = [ship(1, 0, pid=1), ship(2, 0, pid=2)]
+    ships[0]["created_at"] = "2026-09-01T03:59:00Z"
+    ships[1]["created_at"] = "2026-09-01T04:01:00Z"
+    keep = stats.apply_project_cutoff(ships, stats.cutoff_epoch(
+        stats.DEFAULT_CUTOFF_DATE, stats.DEFAULT_CUTOFF_TZ))
+    assert [s["id"] for s in keep] == [1], [s["id"] for s in keep]
+
+
 def test_cutoff_is_per_project_not_per_ship():
     """The rule: keep a project if its ORIGINAL submission was on/before the
     cutoff, and keep ALL of its ships -- resubmissions and second-pass reviews

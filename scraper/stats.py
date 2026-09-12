@@ -18,9 +18,14 @@ WAITING_STATUSES = {"under_review", "pending_second_pass", "pending_fraud_review
 DECIDED_STATUSES = {"shipped", "shipped_missing_airtable", "rejected", "needs_changes"}
 
 # Population cutoff: count projects whose ORIGINAL submission landed on or
-# before this date, interpreted in a US timezone (see apply_project_cutoff).
+# before this date, interpreted in the timezone Macondo itself operates in.
+# That is US Eastern: the final submission rush before the gate closed peaks at
+# 02:00-03:00Z and collapses at exactly 04:00Z, i.e. midnight Eastern -- a
+# deadline cliff only a US-Eastern day boundary explains (60 of the 74 ships
+# stamped "Sep 1" in UTC were submitted before it, so they are Aug 31 to
+# Macondo). Displayed times stay UTC; only the day boundary is local.
 DEFAULT_CUTOFF_DATE = "2026-08-31"
-DEFAULT_CUTOFF_TZ = "UTC"
+DEFAULT_CUTOFF_TZ = "America/New_York"
 # friendlier labels for the zones someone is likely to pick
 TZ_LABELS = {
     "UTC": "UTC+0",

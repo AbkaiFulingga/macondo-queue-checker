@@ -463,7 +463,8 @@
       const cut = s.submission_cutoff;
       if (cut) {
         const late = cut.late_ships_of_kept_projects || 0;
-        cutEl.innerHTML = `Counting <strong>projects first submitted on or before ${esc(cut.date)}</strong> (${esc(cut.tz_label || cut.tz)}) — ${cut.projects_kept.toLocaleString()} projects, ${cut.ships_kept.toLocaleString()} ships. ` +
+        const instant = cut.cutoff_utc ? ` — i.e. ${esc(cut.cutoff_utc)}` : "";
+        cutEl.innerHTML = `Counting <strong>projects first submitted on or before ${esc(cut.date)}</strong> in Macondo's own timezone (${esc(cut.tz_label || cut.tz)}${instant}) — ${cut.projects_kept.toLocaleString()} projects, ${cut.ships_kept.toLocaleString()} ships. ` +
           `Their later resubmissions and second-pass reviews still count (${late} ship${late === 1 ? "" : "s"} arrived after the cutoff). ` +
           `${cut.projects_excluded} project${cut.projects_excluded === 1 ? "" : "s"} first submitted after the cutoff are left out.`;
       } else {

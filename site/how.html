@@ -38,7 +38,14 @@
   <h2>Which projects are counted (the submission cutoff)</h2>
   <p>The dashboard measures a <strong>fixed population</strong>: projects whose
   <strong>original submission</strong> landed on or before
-  <strong id="cutoff-date-inline">31 August 2026</strong>, 23:59:59 UTC+0. Freezing the set
+  <strong id="cutoff-date-inline">31 August 2026</strong>, 23:59:59 in
+  <strong>Macondo's own timezone</strong> (US Eastern — that is
+  <strong>2026-09-01 04:00 UTC</strong>). We use Macondo's day boundary rather
+  than UTC because that is when the programs' deadlines actually fell: the
+  submission rush before the gate closed peaks in the 02:00–03:00 UTC hour and
+  collapses at exactly 04:00 UTC, which is midnight Eastern. Ships Macondo
+  stamped "1 September" in UTC but submitted before that instant were really
+  31 August submissions, and they count.</p> Freezing the set
   this way is what makes "when will the backlog clear?" a question with an answer —
   a queue that keeps growing never drains, so the estimate would be meaningless.</p>
   <p>The cutoff is decided <strong>per project, not per ship</strong>, and that
@@ -54,9 +61,12 @@
       still works, they just aren't part of the backlog measured.</li>
   </ul>
   <p class="muted small" id="cutoff-numbers"></p>
-  <p class="muted small">Every date and time on this site is <strong>UTC+0</strong> —
-  the cutoff date, the snapshot timestamp, and all submission and decision dates.
-  Your browser's local timezone is never applied.</p>
+  <p class="muted small">Two different things are at play here. <strong>Every date and
+  time this site displays is UTC+0</strong> — the snapshot timestamp, and all
+  submission and decision dates (your browser's local timezone is never applied).
+  The <strong>cutoff is the one exception</strong>: it is a day boundary, and a day
+  boundary only means something in someone's local time, so it uses Macondo's
+  (US Eastern). The exact UTC instant is always shown alongside it.</p>
 </section>
 
 <section class="card">

@@ -95,10 +95,13 @@ async function dashboard() {
   check("funnel legend rendered", text(doc.getElementById("funnel-legend")).includes("Shipped"));
   check("drain verdict rendered", text(doc.getElementById("drain-body")).length > 40);
 
-  // the population rule must be stated, not implied
+  // the population rule must be stated, not implied -- including that the
+  // cutoff is a Macondo-local day boundary with its UTC instant spelled out
   const cut = text(doc.getElementById("cutoff-note"));
   check("cutoff note rendered", cut.length > 40, `got "${cut}"`);
-  check("cutoff note names the date and zone", /2026-08-31/.test(cut) && /UTC/.test(cut), cut);
+  check("cutoff note names the date", /2026-08-31/.test(cut), cut);
+  check("cutoff note says whose timezone it is", /Macondo's own timezone/.test(cut), cut);
+  check("cutoff note gives the UTC instant", /04:00:00Z/.test(cut), cut);
 
   // every stage segment must sum to the ship total the legend states
   const legend = text(doc.getElementById("funnel-legend"));

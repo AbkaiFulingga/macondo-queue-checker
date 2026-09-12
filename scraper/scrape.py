@@ -42,6 +42,10 @@ BASE = "https://macondo.hackclub.com/api"
 UA = "macondo-queue-checker/0.1 (+https://github.com/AbkaiFulingga/macondo-queue-checker; nightly snapshot; contact via GitHub)"
 SPACING = 1.1          # seconds between requests, single worker (~54/min < 60/min limit)
 LAST_PEEK_FRONTIER = 30000  # project IDs above this are assumed nonexistent
+FRONTIER_RUNG = 500         # coarse climb step in find_frontier
+FRONTIER_DEAD_RUNGS = 3     # consecutive dead coarse rungs ends phase one
+FRONTIER_DEAD_RUN = 60      # consecutive dead IDs ends the exact top-up walk
+FRONTIER_DEAD_RUN_FULL = 400  # ...and the budget the weekly full sweep uses
 
 
 class Fetcher:
@@ -232,19 +236,50 @@ def projects_from_gallery(fetch, max_pages=40):
     return pids, meta
 
 
-def find_frontier(fetch, known_max):
-    """Climb in 500-ID rungs until 3 consecutive dead rungs."""
+def find_frontier(fetch, known_max, dead_run=None):
+    """Highest live project ID, climbing from the known maximum.
+
+    Two phases: coarse rungs of 500 to cover ground fast (this is what makes a
+    bootstrap scan from an empty corpus work), then an ID-by-ID top-up so the
+    answer is the real top rather than wherever a rung happened to land.
+
+    Both phases need a long run of missing IDs before giving up, because
+    deleted projects are interleaved through the space (~30% of IDs 404), so a
+    short dead run proves nothing. The trade-off is the reverse case: a run of
+    missing IDs longer than `dead_run` ends the walk, so anything live beyond
+    such a gap is not seen this time. The weekly full sweep passes a much larger
+    budget to bound that exposure to a week.
+
+    The old version probed rungs starting at known_max + 500, so it could only
+    ever report a multiple of 500 above the known max. Once the true frontier
+    was less than 500 above it, the climb could not advance -- so every project
+    created after the last rung-aligned position stayed invisible to the nightly
+    AND to the Sunday full sweep, which shares this function.
+    """
+    dead_run = FRONTIER_DEAD_RUN if dead_run is None else dead_run
     hi = known_max
-    cand = known_max + 500
     dead = 0
-    while cand < LAST_PEEK_FRONTIER and dead < 3:
+    cand = known_max
+    while cand < LAST_PEEK_FRONTIER and dead < FRONTIER_DEAD_RUNGS:
+        cand += FRONTIER_RUNG
         code, _ = fetch.get_json(f"/projects/{cand}/ships")
         if code == 200:
             hi = cand
             dead = 0
         else:
             dead += 1
-        cand += 500
+    # exact top: walk one ID at a time from the last live rung. Above the real
+    # frontier everything 404s, so this terminates within dead_run probes.
+    pid = hi
+    dead = 0
+    while pid < LAST_PEEK_FRONTIER and dead < dead_run:
+        pid += 1
+        code, _ = fetch.get_json(f"/projects/{pid}/ships")
+        if code == 200:
+            hi = pid
+            dead = 0
+        else:
+            dead += 1
     return hi
 
 
@@ -467,7 +502,10 @@ def run(args):
         # (deleted projects); guarantees no project is missed. Merged with
         # the committed corpus so enrichment metadata is never lost.
         fetch.log("FULL ID-SPACE SCAN")
-        frontier = find_frontier(fetch, max(baseline and max(s.get("pid") or 0 for s in baseline) or 1, 1))
+        # generous dead-run budget: this sweep is the authority on what exists,
+        # so it walks past long gaps that the nightly's cheaper budget stops at
+        frontier = find_frontier(fetch, max(baseline and max(s.get("pid") or 0 for s in baseline) or 1, 1),
+                                dead_run=FRONTIER_DEAD_RUN_FULL)
         lo = max(1, args.from_id)
         fetch.log(f"scanning {lo}..{frontier}")
         spids, sships = scan_id_range(fetch, lo, frontier)

@@ -72,8 +72,10 @@ jobs:
           # after it. The scraper's corpus stays complete either way -- the
           # cutoff only shapes the published snapshot, so it can be re-cut
           # without re-scraping. All times the site displays are UTC.
+          # end of 31 Aug in Macondo's own timezone (US Eastern = 2026-09-01
+          # 04:00Z); the rush before the gate closed collapses at that instant
           CUTOFF: "2026-08-31"
-          CUTOFF_TZ: "UTC"
+          CUTOFF_TZ: "America/New_York"
         run: |
           # Scheduled Sunday 03:00 + manual "full" => full baseline; else nightly delta
           if [ "$EVENT_NAME" = "schedule" ] && [ "$(date -u +%u)" = "7" ] || [ "$INPUT_MODE" = "full" ]; then

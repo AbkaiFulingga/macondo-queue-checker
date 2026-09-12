@@ -67,13 +67,20 @@ jobs:
             echo "no changes"
           else
             git commit -m "nightly snapshot $(date -u +%Y-%m-%d)"
-            # another push (manual or another run) may have landed meanwhile;
-            # rebase on top of it and retry once
-            if ! git push; then
+            # A manual push or another run may land meanwhile. Rebase; if the
+            # generated data files conflict, the FRESH run data wins (it is
+            # newer than whatever the remote got), then continue and retry.
+            for i in 1 2 3; do
+              if git push; then break; fi
               git fetch origin main
-              git rebase origin/main
-              git push
-            fi
+              if git rebase origin/main; then
+                git push && break
+              fi
+              git checkout --theirs site/data/snapshot.json site/data/ships.ndjson
+              git add site/data/snapshot.json site/data/ships.ndjson
+              GIT_EDITOR=true git rebase --continue
+              git push && break
+            done
           fi
 
       - name: Configure Pages

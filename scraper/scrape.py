@@ -322,20 +322,67 @@ def merge_ships(baseline, fresh):
 # ------------------------------------------------------------------- main
 
 
-def enrich_with_project_meta(fetch, ships):
-    """Fill name/level/type/owner on ship records via /projects/{pid}.
-    Only pids missing metadata are fetched (~1 req each, still polite)."""
-    need = {s.get("pid") for s in ships
-            if s.get("status") in ("under_review", "pending_second_pass",
-                                   "pending_fraud_review")
-            and not s.get("name")}
+# Project attributes that are stable enough to fetch once and cache forever.
+META_FILL_KEYS = ("name", "level", "type", "owner")
+# ...and the ones that move over a project's life, so waiting ships re-read
+# them every run (hours accrue, the streak multiplier changes).
+META_LIVE_KEYS = ("hours", "mult")
+WAITING_STATUSES = ("under_review", "pending_second_pass", "pending_fraud_review")
+
+
+def load_meta_cache(path):
+    if path and os.path.exists(path):
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+        except (ValueError, OSError):
+            pass
+    return {}
+
+
+def save_meta_cache(path, cache):
+    if not path:
+        return
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(cache, f, separators=(",", ":"), sort_keys=True)
+    os.replace(tmp, path)
+
+
+def enrich_with_project_meta(fetch, ships, cache=None, cache_path=None,
+                             refresh_waiting=True):
+    """Fill project-level fields (name/level/type/owner) onto ship records.
+
+    The old version only fetched projects that had a *waiting* ship, so a ship
+    that was decided before we ever saw it waiting never picked up its project's
+    `type`.  That made per-type comparisons nonsense: decided ships with a known
+    type were ~95% approvals while the untyped rest were ~35%, because the
+    untyped set was almost exactly the `needs_changes`/`rejected` back-catalogue.
+
+    Fetching every project would be ~3.9k requests per run, so the results go
+    into a persistent cache (`project_meta.json`): each project is fetched at
+    most once ever, and a one-off backfill heals the historical gap.  Waiting
+    ships still re-read hours/multiplier each run since those move.
+    """
+    cache = {} if cache is None else cache
+    by_pid = {}
+    for s in ships:
+        by_pid.setdefault(s.get("pid"), []).append(s)
+
+    need = {pid for pid, rs in by_pid.items()
+            if refresh_waiting
+            and any(s.get("status") in WAITING_STATUSES for s in rs)}
+    need |= {pid for pid in by_pid if pid not in cache}
     if not need:
         return ships
 
     def one(pid):
         code, data = fetch.get_json(f"/projects/{pid}")
         if code != 200 or not isinstance(data, dict):
-            return None
+            # a 404/410 is a real answer: remember it so we don't retry forever
+            return (pid, None) if code in (404, 410) else None
         return pid, {
             "name": data.get("name"),
             "level": str(data.get("level")) if data.get("level") else None,
@@ -345,17 +392,33 @@ def enrich_with_project_meta(fetch, ships):
             "mult": data.get("reward_estimate_multiplier"),
         }
 
-    fetched = {}
-    for res in map_workers(fetch, one, sorted(need), desc="meta enrichment"):
-        if res:
-            fetched[res[0]] = res[1]
+    # Fetch in chunks and checkpoint the cache after each one: a first pass over
+    # the whole corpus is thousands of requests, and a timeout part-way through
+    # should not throw that work away.
+    todo = sorted(need)
+    for i in range(0, len(todo), 200):
+        batch = todo[i:i + 200]
+        for res in map_workers(fetch, one, batch):
+            if res:
+                cache[res[0]] = res[1]
+        save_meta_cache(cache_path, cache)
+        if not fetch.quiet:
+            print(f"  meta enrichment: {min(i + 200, len(todo))}/{len(todo)}",
+                  file=sys.stderr, flush=True)
+
     for s in ships:
-        m = fetched.get(s.get("pid"))
-        if m:
-            # fill only when missing OR null (setdefault skips null-valued keys)
-            for key in ("name", "level", "type", "owner", "mult"):
-                if not s.get(key):
-                    s[key] = m[key]
+        m = cache.get(s.get("pid"))
+        if not m:
+            continue
+        waiting = s.get("status") in WAITING_STATUSES
+        keys = META_FILL_KEYS + META_LIVE_KEYS if waiting else META_FILL_KEYS
+        for key in keys:
+            if m.get(key) is None:
+                continue
+            # fresh projects are authoritative for waiting ships; a decided
+            # ship's record is history, so it only fills what's missing
+            if waiting or not s.get(key):
+                s[key] = m[key]
     return ships
 
 
@@ -475,9 +538,14 @@ def run(args):
 
     all_ships = dedupe_ships(all_ships)
     fetch.log(f"unique ships: {len(all_ships)}")
-    # waiting ships without metadata get one /projects/{pid} each so the
-    # queue table shows names/levels/owners
-    all_ships = enrich_with_project_meta(fetch, all_ships)
+    # Fill project metadata: waiting ships every run (names/levels for the queue
+    # table, fresh hours/multiplier), everything else once via the meta cache.
+    meta_cache_path = os.path.join(os.path.dirname(out_path), "project_meta.json")
+    meta_cache = load_meta_cache(meta_cache_path)
+    before = len(meta_cache)
+    all_ships = enrich_with_project_meta(fetch, all_ships, cache=meta_cache,
+                                         cache_path=meta_cache_path)
+    fetch.log(f"meta cache: {before} -> {len(meta_cache)} projects")
 
     # ---- snapshot
     snap = stats.build_snapshot(all_ships, gate_closed=args.gate_closed)

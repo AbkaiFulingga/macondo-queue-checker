@@ -631,6 +631,9 @@ def _type_stats(all_ships, now, gate_closed):
     return {
         "queue_count": q["count"],
         "decided_count": len(decided),
+        # exact per-type stage counts, so the funnel/legend follow the toggle
+        # instead of always reporting the global totals
+        "pipeline": pipeline_counts(all_ships),
         "series": {
             "queue_depth": depth_history(all_ships, now=now),
             "decisions_daily": decisions_daily(decided, now=now),

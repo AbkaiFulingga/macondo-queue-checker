@@ -65,6 +65,7 @@
     if (!proj && SNAP) {
       const meta = (SNAP.queue.ships || []).find(s => String(s.pid) === String(pid));
       if (meta) {
+        $("search-msg").textContent = "";
         await renderSnapshotFull(meta, "Live lookup unavailable (no proxy) — snapshot data from last night.");
         return;
       }
@@ -437,23 +438,29 @@
     if (window.renderCharts) window.renderCharts({ series: b.series, drain: b.drain });
 
     // ---- big picture: every project on Macondo, accounted for
-    const pipe = s.pipeline || {};
-    const totalShips = s.meta.n_ships || null;
+    // The funnel and its reading follow the active type filter (exact per-type
+    // stage counts). The three project-count cards stay site-wide: a project
+    // that never submitted has no ship, so it has no ship type to split on.
+    const pipe = b.pipeline || s.pipeline || {};
+    const totalShips = ["shipped", "needs_changes", "rejected", "under_review",
+                        "fraud_review", "second_pass"]
+      .reduce((n, k) => n + (pipe[k] || 0), 0) || (s.meta.n_ships || null);
     const totalLive = (s.meta && s.meta.n_live_projects_total) || null;
     const withShips = s.meta.n_projects || null;
     const decidedShips = (pipe.shipped || 0) + (pipe.rejected || 0) + (pipe.needs_changes || 0);
     const neverSubmitted = (totalLive != null && withShips != null) ? totalLive - withShips : null;
-    const distinctWaiting = new Set((q.ships || []).map(x => x.pid)).size || null;
+    const queueShips = (q.ships || []).filter(x => !ACTIVE_TYPE || x.type === ACTIVE_TYPE);
+    const distinctWaiting = new Set(queueShips.map(x => x.pid)).size || null;
     const bp = [
       { v: totalLive != null ? totalLive.toLocaleString() : "12,210", k: "projects on Macondo", tip: "Every live (non-deleted) project, from our complete scan of all 17,451 project IDs." },
       { v: neverSubmitted != null ? neverSubmitted.toLocaleString() : "≈8,350", k: "never submitted for review", tip: "Projects that exist but have never shipped anything. Most projects never get submitted — this is normal and they cost the queue nothing." },
       { v: withShips != null ? withShips.toLocaleString() : "3,860", k: "submitted at least once", tip: "Projects with at least one ship in their history." },
-      { v: distinctWaiting || q.count, k: "projects in queue right now", tip: "Distinct projects with a ship currently awaiting review. Highlighted — this is the live line.", hot: true },
+      { v: distinctWaiting || (b.queue_count != null ? b.queue_count : q.count), k: "projects in queue right now", tip: "Distinct projects with a ship currently awaiting review. Highlighted — this is the live line.", hot: true },
     ];
     $("bigpicture-cards").innerHTML = bp.map(x =>
       `<div class="bp-card${x.hot ? " hot" : ""}"><div class="v">${x.v}</div><div class="k">${x.k}<i class="tip" tabindex="0" data-tip="${esc(x.tip)}"></i></div></div>`).join("");
 
-    // funnel bar: all 4,064 ships by current state
+    // funnel bar: every ship ever submitted, by current state
     if (totalShips) {
       const seg = (n, cls) => n ? `<div class="${cls}" style="flex:${n}" title="${n}"></div>` : "";
       $("funnel-bar").innerHTML =
@@ -465,9 +472,18 @@
         <span><i class="dot seg-warn"></i>Needs changes: <b>${pipe.needs_changes || 0}</b> (${pct(pipe.needs_changes)}%)</span>
         <span><i class="dot seg-bad"></i>Rejected: <b>${pipe.rejected || 0}</b> (${pct(pipe.rejected)}%)</span>
         <span><i class="dot seg-wait"></i>In queue: <b>${pipe.under_review || 0}</b> (${pct(pipe.under_review)}%)</span>
-        <span class="muted">— every ship ever submitted (${totalShips.toLocaleString()} total)</span>`;
+        <span class="muted">— every ${typeLabel ? typeLabel + " " : ""}ship ever submitted (${totalShips.toLocaleString()} total)</span>`;
+      // percentages come from the data, not from a hand-written claim: among
+      // decided ships these three sum to 100% (a change-request is reworkable,
+      // a rejection is terminal)
+      const dec = decidedShips || 1;
+      const pc = (n) => `${Math.round(((n || 0) / dec) * 100)}%`;
+      const scope = typeLabel
+        ? `${totalShips.toLocaleString()} ${typeLabel} ships`
+        : `${totalShips.toLocaleString()} ships ever submitted across ${withShips ? withShips.toLocaleString() + " projects" : "all projects"}`;
       $("bigpicture-interp").innerHTML =
-        `<span class="lead">Reading this</span>Of <strong>${totalShips.toLocaleString()}</strong> ships ever submitted across ${withShips ? withShips.toLocaleString() + " projects" : "all projects"}: <strong>${decidedShips.toLocaleString()}</strong> have been reviewed (that's ${(pipe.shipped || 0).toLocaleString()} approvals, ${(pipe.needs_changes || 0).toLocaleString()} change-requests, ${(pipe.rejected || 0).toLocaleString()} rejections), and <strong>${(pipe.under_review || 0).toLocaleString()}</strong> are waiting right now. Roughly 2 in 3 decided ships get approved at first pass — and change-requests aren't rejections, you revise and rejoin the queue.`;
+        `<span class="lead">Reading this</span>Of <strong>${scope}</strong>: <strong>${decidedShips.toLocaleString()}</strong> have been reviewed (that's ${(pipe.shipped || 0).toLocaleString()} approvals, ${(pipe.needs_changes || 0).toLocaleString()} change-requests, ${(pipe.rejected || 0).toLocaleString()} rejections), and <strong>${(pipe.under_review || 0).toLocaleString()}</strong> are waiting right now.` +
+        ` Of the reviewed ships, <strong>${pc(pipe.shipped)}</strong> ended up shipping, <strong>${pc(pipe.needs_changes)}</strong> were sent back for changes (not a rejection — you revise and rejoin the queue), and <strong>${pc(pipe.rejected)}</strong> were rejected outright.`;
     }
 
     // drain verdict — the honest answer to "when will ALL reviews finish?"
@@ -484,7 +500,9 @@
         verdict += ` Reviewer pace has historically swung 4× (sustained 5–6/day pushes in August vs quiet weeks), so treat the date as a midpoint, not a promise.`;
         if (typeLabel && b.type_coverage && b.type_coverage.total) {
           const covPct = Math.round(b.type_coverage.typed / b.type_coverage.total * 100);
-          verdict += ` <span class="muted">Type breakdowns use the ${covPct}% of decided ships with known type — the real pace for ${typeLabel} may differ.</span>`;
+          if (covPct < 95) {
+            verdict += ` <span class="muted">Type breakdowns use the ${covPct}% of decided ships with known type — the real pace for ${typeLabel} may differ.</span>`;
+          }
         }
         color = "var(--ok)";
       } else if (net == null) { verdict = "Not enough recent data to project."; color = "var(--muted)"; }

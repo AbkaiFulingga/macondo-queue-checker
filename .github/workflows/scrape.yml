@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "0 3 * * *"   # 03:00 UTC nightly — fast delta
     - cron: "0 3 * * 0"   # 03:00 UTC Sundays — full baseline
+  push:
+    branches: [main]
+    paths:
+      - "site/**"             # UI-only change: skip the scrape, just redeploy
+      - ".github/workflows/scrape.yml"
   workflow_dispatch:
     inputs:
       mode:
@@ -22,6 +27,7 @@ concurrency:
 
 jobs:
   scrape:
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 200
     steps:
@@ -62,7 +68,7 @@ jobs:
         run: |
           git config user.name "queue-bot"
           git config user.email "actions@github.com"
-          git add site/data/snapshot.json site/data/ships.ndjson
+          git add site/data/snapshot.json site/data/ships.ndjson site/data/project_meta.json
           if git diff --staged --quiet; then
             echo "no changes"
           else
@@ -70,18 +76,31 @@ jobs:
             # A manual push or another run may land meanwhile. Rebase; if the
             # generated data files conflict, the FRESH run data wins (it is
             # newer than whatever the remote got), then continue and retry.
+            DATA="site/data/snapshot.json site/data/ships.ndjson site/data/project_meta.json"
             for i in 1 2 3; do
               if git push; then break; fi
               git fetch origin main
               if git rebase origin/main; then
                 git push && break
               fi
-              git checkout --theirs site/data/snapshot.json site/data/ships.ndjson
-              git add site/data/snapshot.json site/data/ships.ndjson
+              git checkout --theirs $DATA
+              git add $DATA
               GIT_EDITOR=true git rebase --continue
               git push && break
             done
           fi
+
+  deploy:
+    needs: scrape
+    # a push that only touches site/** skips the scrape job and deploys the
+    # committed data straight away, so UI fixes ship in ~1 minute
+    if: always() && (needs.scrape.result == 'success' || needs.scrape.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
@@ -91,12 +110,5 @@ jobs:
         with:
           path: site
 
-  deploy:
-    needs: scrape
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
       - id: deployment
         uses: actions/deploy-pages@v4

@@ -299,6 +299,93 @@ def test_empty_inputs():
     assert stats.pipeline_counts([])["under_review"] == 0
 
 
+# ------------------------------------------------- type-bundle / enrichment
+
+
+def test_type_bundles_carry_exact_pipeline_counts():
+    """The dashboard toggle reads these, so per-type stage counts must be the
+    type's own -- not the global totals."""
+    ships = [
+        ship(1, 0, status="under_review", pid=1, type_="software"),
+        ship(2, 0, 3, status="shipped", pid=2, type_="software"),
+        ship(3, 0, 4, status="rejected", pid=3, type_="software"),
+        ship(4, 0, status="under_review", pid=4, type_="hardware"),
+        ship(5, 0, 2, status="needs_changes", pid=5, type_="hardware"),
+    ]
+    snap = stats.build_snapshot(ships, now=datetime(2026, 6, 1, tzinfo=timezone.utc))
+    assert set(snap["by_type"]) == {"all", "software", "hardware"}
+
+    sw = snap["by_type"]["software"]
+    assert sw["queue_count"] == 1, sw["queue_count"]
+    assert sw["decided_count"] == 2, sw["decided_count"]
+    assert sw["pipeline"]["under_review"] == 1
+    assert sw["pipeline"]["shipped"] == 1
+    assert sw["pipeline"]["rejected"] == 1
+
+    hw = snap["by_type"]["hardware"]
+    assert hw["queue_count"] == 1 and hw["pipeline"]["needs_changes"] == 1
+    assert hw["pipeline"]["shipped"] == 0
+
+    # the 'all' bundle must agree with the top-level snapshot numbers
+    assert snap["by_type"]["all"]["pipeline"] == snap["pipeline"]
+    assert snap["by_type"]["all"]["queue_count"] == snap["queue"]["count"]
+    assert snap["by_type"]["all"]["type_coverage"] == {"typed": 5, "total": 5}
+
+
+class _FakeShipsAPI:
+    """Minimal stand-in for scrape.Fetcher covering what enrichment uses."""
+    workers = 1
+    quiet = True
+
+    def __init__(self):
+        self.calls = []
+
+    def get_json(self, path):
+        self.calls.append(path)
+        pid = int(path.rsplit("/", 1)[1])
+        return 200, {"name": f"P{pid}", "level": 3, "type": "hardware",
+                     "owner": {"username": "u"}, "public_total_hours": 12.0,
+                     "reward_estimate_multiplier": 1.5}
+
+
+def test_enrich_gives_decided_ships_their_type_once():
+    """Regression: decided ships used to stay untyped because only *waiting*
+    ships were ever enriched, which skewed every per-type comparison."""
+    import scrape
+
+    s = ship(1, 0, 3, status="shipped", pid=7, type_=None)
+    s["name"] = None
+    fetch, cache = _FakeShipsAPI(), {}
+    out = scrape.enrich_with_project_meta(fetch, [s], cache=cache, cache_path=None)
+
+    assert fetch.calls == ["/projects/7"], fetch.calls
+    assert out[0]["type"] == "hardware"
+    assert out[0]["name"] == "P7"
+    # hours/multiplier are "live" fields: a decided ship keeps the hours it was
+    # reviewed at rather than being overwritten with today's project total
+    approx(out[0]["hours"], 10.0, 0.001)
+
+    # a decided ship's metadata is stable, so the second pass makes no request
+    fetch2 = _FakeShipsAPI()
+    out2 = scrape.enrich_with_project_meta(fetch2, out, cache=cache, cache_path=None)
+    assert fetch2.calls == [], fetch2.calls
+    assert out2[0]["type"] == "hardware"
+
+
+def test_enrich_refreshes_live_fields_for_waiting_ships():
+    import scrape
+
+    s = ship(1, 0, status="under_review", pid=9, type_="software", hours=10.0)
+    fetch = _FakeShipsAPI()
+    out = scrape.enrich_with_project_meta(fetch, [s], cache={}, cache_path=None)
+    # waiting ships are re-read every run: hours accrue and the streak
+    # multiplier changes while you sit in the queue
+    approx(out[0]["hours"], 12.0, 0.001)
+    approx(out[0]["mult"], 1.5, 0.001)
+    # ...but the project's own type is authoritative, not the stale one
+    assert out[0]["type"] == "hardware"
+
+
 # ------------------------------------------------------- seed-corpus tests
 
 

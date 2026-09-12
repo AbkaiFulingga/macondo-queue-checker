@@ -65,11 +65,10 @@
     if (!proj && SNAP) {
       const meta = (SNAP.queue.ships || []).find(s => String(s.pid) === String(pid));
       if (meta) {
-        renderSnapshotOnly(meta, "Live lookup unavailable (no proxy) — showing last night's snapshot.");
+        await renderSnapshotFull(meta, "Live lookup unavailable (no proxy) — snapshot data from last night.");
         return;
       }
-      // decided project not in queue: try snapshot corpus is not available; ask user
-      $("search-msg").textContent = "Live lookup needs the CORS proxy (see How it works). Project may also not exist.";
+      $("search-msg").textContent = "Live lookup needs the CORS proxy (see How it works). Project may also not exist or already be decided.";
       return;
     }
     if (!proj) {
@@ -188,22 +187,25 @@
     const myStage = window.eta.stageOf(active.status);
     const decidedStates = { shipped: true, rejected: true, needs_changes: true };
     const myIdx = stageKeys.indexOf(myStage === "rejected" || myStage === "needs_changes" ? "second_pass" : myStage);
-    const dwell = SNAP ? SNAP.pipeline || {} : {};
+    const STEP_SUBS = {
+      "under_review": SNAP && SNAP.latency && SNAP.latency.median_days ? "~" + Math.round(SNAP.latency.median_days) + "d median" : "in the queue",
+      "fraud_review": "only if flagged",
+      "second_pass": "final check after approval",
+      "shipped": "rewards released",
+    };
     $("stepper").innerHTML = STEP_DEFS.map((s, i) => {
       let cls = "";
       if (i < myIdx || (myStage === "shipped" && i <= 3)) cls = "done";
       else if (i === myIdx) cls = "active";
-      else if (decidedStates[myStage] && i === 3) cls = "";
       return `<div class="step ${cls}">${s.label}
-        <span class="dwell">${i === 0 && dwell.under_review ? "~" + Math.round((SNAP.latency.median_days || 0)) + "d median" : ""}
-        ${i === 2 ? "final check" : ""}${i === 3 ? "rewards released" : ""}</span></div>`;
+        <span class="dwell">${esc(STEP_SUBS[s.key] || "")}</span></div>`;
     }).join("");
     $("stepper-note").textContent =
       myStage === "second_pass"
         ? "Your project has been accepted by a reviewer and is waiting on the final second-pass check. Rewards release after it — nothing for you to do."
         : myStage === "fraud_review"
-          ? "This ship was escalated to the fraud squad. Public data can't predict fraud-review timing."
-          : "Reviewers claim ships from the queue individually — this shows where you are, not a strict line order.";
+          ? "This ship was escalated to the fraud squad — it happens to a small fraction of ships and doesn't imply anything is wrong. Public data can't predict fraud-review timing."
+          : "Reviewers claim ships from the queue individually — this shows where you are in the pipeline, not a strict line order. The fraud-check stage is only shown if it applies to you.";
   }
 
   function renderEta(est) {
@@ -218,12 +220,21 @@
       return;
     }
     const fast = est.fast_lane_pct != null ? Math.round(est.fast_lane_pct * 100) : null;
+    const methodText = {
+      "front velocity (14d)": "from how fast reviewers have been clearing the backlog in the last 2 weeks",
+      "gross decision rate (14d)": "from the raw decisions-per-day pace (backlog may share the work)",
+      "backlog-lane median": "from the historical median wait (recent reviewer pace unclear)",
+    }[est.method] || "";
     el.innerHTML = `
       <p class="eta-range">${est.range_low_d}–${est.range_high_d} days</p>
       <p class="eta-sub">median estimate ~${fmtDays(est.central_days)}${est.eta_date ? " · around " + est.eta_date : ""}</p>
-      ${est.rank ? `<p class="muted small">Roughly #${est.rank} of ${est.queue_count} waiting ships by age (claim-based — not a strict line).</p>` : ""}
-      ${est.method ? `<p class="muted small">Method: ${esc(est.method)}${est.days_waiting != null ? " · waiting " + est.days_waiting + " days so far" : ""}</p>` : ""}
-      <div class="fast-lane">⚡ ${(fast != null ? fast : 16)}% of ships get claimed within 24h — so it could be any day now.</div>`;
+      <div class="interp"><span class="lead">What this number means</span>
+        This is <strong>not a promise or a date</strong> — it's a statistical window computed ${methodText}.
+        ${est.rank ? `About <strong>${est.rank - 1}</strong> ships submitted before yours are still waiting; a pure oldest-first queue would put your turn near ${est.eta_date || fmtDays(est.central_days)}.` : ""}
+        Reviewers don't work oldest-first though — they <strong>claim</strong> ships, so the real date can land anywhere in (or outside) this window.
+      </div>
+      ${est.rank ? `<p class="muted small">You are roughly #${est.rank} of ${est.queue_count} waiting ships by submission age <i class="tip" tabindex="0" data-tip="Sorted by when ships were submitted. It shows who's 'ahead' in a fair-world queue — but reviewers pick ships individually, so this is context, not a line number."></i> · waiting ${est.days_waiting} days so far${est.backlog_median_days ? " · ships that miss the fast lane historically wait a median of " + Math.round(est.backlog_median_days) + "d" : ""}.</p>` : ""}
+      <div class="fast-lane">⚡ ${(fast != null ? fast : 16)}% of ships get claimed within 24h (median 3 hours) — so it could be any day now. This is real and it's the best argument for not stressing about the queue math.</div>`;
   }
 
   function renderFile(proj, active, ships) {
@@ -253,16 +264,20 @@
     const row = window.eta.myCohort({ created_at: active.created_at }, SNAP || {});
     const el = $("cohort-body");
     if (!row) { el.innerHTML = '<p class="muted">No cohort data for this week yet.</p>'; return; }
-    const bar = (pct) => {
+    const mkbar = (label, pct, color) => {
       const p = Math.round((pct || 0) * 100);
-      return `<div class="bar"><div class="bar-fill" style="width:${p}%"></div><span>${p}%</span></div>`;
+      return `<div class="bar"><span class="muted small" style="min-width:118px">${label}</span>
+        <div class="track"><div class="fill" style="width:${p}%;${color ? "background:" + color : ""}"></div></div>
+        <span class="pct">${p}%</span></div>`;
     };
-    el.innerHTML = `<p class="muted small">Week of ${esc(row.week)} — ${row.n} ships submitted:</p>
-      <ul class="clean">
-        <li>Decided within 7 days: ${bar(row.dec7d)}</li>
-        <li>within 14 days: ${bar(row.dec14d)}</li>
-        <li>within 30 days: ${bar(row.dec30d)}</li>
-      </ul>`;
+    el.innerHTML = `<p class="readhow">Ships submitted the <b>same week as yours</b> — ${row.n} of them. What happened to each of them:</p>
+      <div class="bars">
+        ${mkbar("decided in 7 days", row.dec7d)}
+        ${mkbar("in 14 days", row.dec14d)}
+        ${mkbar("in 30 days", row.dec30d)}
+        ${mkbar("decided at all", row.decided_total, "var(--ok)")}
+      </div>
+      <p class="muted small">These are the ships most similar to you in timing — they faced the same reviewers and the same backlog. If most of your week is decided but you're still waiting, you're in the slow tail; if few are decided, the whole week is still queued and there's nothing wrong with your ship.</p>`;
     $("cohort-card").classList.remove("hidden");
   }
 
@@ -271,13 +286,15 @@
       { hours: proj.public_total_hours, level: proj.level }, SNAP || {}, 5);
     const el = $("similar-body");
     if (!sims.length) { el.innerHTML = '<p class="muted">No comparable decided ships yet.</p>'; return; }
-    el.innerHTML = "<table><thead><tr><th>Project</th><th>Lvl</th><th>Hours</th><th>Outcome</th><th>Waited</th></tr></thead><tbody>" +
+    el.innerHTML = "<p class='readhow'>Recently decided ships with <b>similar hours and level</b> to yours — your closest real-world precedents:</p>" +
+      "<table><thead><tr><th>Project</th><th>Lvl</th><th>Hours</th><th>Outcome</th><th>Waited</th></tr></thead><tbody>" +
       sims.map(s => {
         const cls = s.status === "shipped" ? "ok" : s.status === "rejected" ? "bad" : "wait";
         return `<tr><td><a href="https://macondo.hackclub.com/projects/${s.pid}">${esc(s.name || "#" + s.pid)}</a></td>
           <td>L${esc(s.level)}</td><td>${fmtH(s.hours)}</td>
           <td><span class="pill ${cls}">${esc(s.status)}</span></td><td>${fmtDays(s.waited_d)}</td></tr>`;
-      }).join("") + "</tbody></table>";
+      }).join("") + "</tbody></table>" +
+      "<p class='muted small'>Numbers beat abstractions: if similar ships waited 2–5 weeks, your expectation should anchor there — not on the median of every ship ever.</p>";
     $("similar-card").classList.remove("hidden");
   }
 
@@ -290,8 +307,55 @@
     if (g == null) { $("gold-card").classList.add("hidden"); return; }
     $("gold-body").innerHTML = `<p class="eta-range">${g.toLocaleString()} gold</p>
       <p class="eta-sub">if approved: ${fmtH(h)} × ${rate}/hr (level ${esc(proj.level)}) × ${Math.round(mult * 100) / 100}× (streak multiplier)</p>
-      <p class="muted small">Estimate from public reward rates; the final amount is set at review. Base rates: L1 40 · L2 45 · L3 50 · L4 60 gold/hour.</p>`;
+      <p class="muted small">Where this comes from: Macondo pays a base rate per logged hour by project level (L1 40 · L2 45 · L3 50 · L4 60 gold/hour), multiplied by your streak bonus (${Math.round(mult * 100) / 100}× for your current streak). Your hours are the live Hackatime count, so this estimate grows if you keep working. The final amount is whatever the reviewer confirms — estimates are not commitments.</p>`;
     $("gold-card").classList.remove("hidden");
+  }
+
+  async function renderSnapshotFull(meta, note) {
+    // Full result card from snapshot data alone (no proxy / no live fetch).
+    // meta: the ship's entry from SNAP.queue.ships.
+    $("result").classList.remove("hidden");
+    const banner = $("result-banner");
+    banner.className = "card";
+    banner.innerHTML = `<h2><span class="pill wait">In review queue</span> ${esc(meta.name || "Project " + meta.pid)} <span class="pill wait">snapshot</span></h2>
+      <p class="eta-sub">${esc(note)}</p>
+      <p class="muted small">Submitted ${esc((meta.created_at || "").slice(0, 10))} ·
+      <a href="https://macondo.hackclub.com/projects/${meta.pid}">view live status on Macondo ↗</a></p>`;
+
+    // stepper
+    const active = { id: meta.id, status: "under_review", created_at: meta.created_at };
+    renderStepper(active);
+
+    // ETA from snapshot's own ranked queue
+    const est = window.eta.estimate(
+      { id: meta.id, status: "under_review", created_at: meta.created_at, hours: meta.hours, level: meta.level },
+      SNAP);
+    $("eta-card").classList.remove("hidden");
+    renderEta(est);
+
+    // your-file panel from snapshot fields
+    $("file-card").classList.remove("hidden");
+    const submitted = new Date(meta.created_at);
+    const waitingDays = Math.floor((Date.now() - submitted.getTime()) / 86400000);
+    const kv = [
+      ["Project", `<a href="https://macondo.hackclub.com/projects/${meta.pid}">${esc(meta.name || "#" + meta.pid)} ↗</a>`],
+      ["Owner", esc(meta.owner || "—")],
+      ["Level", meta.level ? `L${esc(meta.level)} · ${esc(meta.type || "")}` : "—"],
+      ["Submitted", (meta.created_at || "").slice(0, 10)],
+      ["Waiting", waitingDays + " days"],
+      ["Hours logged", fmtH(meta.hours) + " (as of snapshot)"],
+    ];
+    $("file-body").innerHTML = "<dl class='kv'>" + kv.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("") + "</dl>" +
+      `<p class="muted small">Deploy the CORS proxy (see How it works) for live status and hours on every check.</p>`;
+
+    // cohort + similar + gold all work from snapshot
+    renderCohort(active, est);
+    const fakeProj = { public_total_hours: meta.hours, level: meta.level,
+                       reward_estimate_multiplier: 1, project_streak_days: null,
+                       name: meta.name, id: meta.pid };
+    renderSimilar(active, fakeProj, [], est);
+    renderGold(fakeProj, est);
+    $("result").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function renderSnapshotOnly(meta, note) {
@@ -313,16 +377,46 @@
     const q = s.queue || {};
     const drain = s.drain || {};
     const stats = [
-      { v: q.count || 0, k: "ships in queue" },
-      { v: q.oldest_days != null ? Math.round(q.oldest_days) + "d" : "—", k: "longest wait" },
-      { v: q.front_date || "—", k: "front (oldest waiting)" },
-      { v: drain.decisions_per_day_14d != null ? drain.decisions_per_day_14d : "—", k: "decisions/day (14d)" },
-      { v: lat.median_days != null ? Math.round(lat.median_days) + "d" : "—", k: "median wait" },
-      { v: Math.round((s.outcomes.approval || 0) * 100) + "%", k: "approval rate" },
+      { v: q.count || 0, k: "ships in queue",
+        sub: "submitted, waiting on a reviewer right now", tip: "Every ship that has been submitted for review but hasn't received a decision. This is the whole line you're in — reconstructed from public data, so it may miss a few ships on private/hidden projects." },
+      { v: q.oldest_days != null ? Math.round(q.oldest_days) + "d" : "—", k: "longest wait",
+        sub: "the oldest ship still waiting", tip: "How long the most patient ship has been in line. The higher this is, the more behind the review team is — a healthy queue keeps this under 2–3 weeks." },
+      { v: q.front_date || "—", k: "review front",
+        sub: "reviewers are deciding ships submitted around then", tip: "The submission date of the oldest waiting ship. Decisions being made today are typically for ships submitted around this date — it's where the review 'front' has reached in the backlog." },
+      { v: drain.decisions_per_day_14d != null ? drain.decisions_per_day_14d : "—", k: "decisions/day",
+        sub: "reviewer pace over the last 14 days", tip: "Average ships decided per day over the trailing two weeks. Reviewers are volunteers — this varies a lot week to week (bursts of 5–10/day happen, so do quiet weeks)." },
+      { v: lat.median_days != null ? Math.round(lat.median_days) + "d" : "—", k: "median wait",
+        sub: "half of decided ships waited this long", tip: "The middle of the distribution: half of all decided ships waited less than this, half waited more. Based on every decided ship in our data, not just recent ones." },
+      { v: Math.round((s.outcomes.approval || 0) * 100) + "%", k: "approval rate",
+        sub: "of ships that got a decision", tip: "Among ships that received any decision, the share approved. The rest were rejected or asked for changes. Your odds depend on your hours, level, and documentation — see the approval breakdown below." },
     ];
-    $("stat-cards").innerHTML = stats.map(x => `<div class="stat"><div class="v">${x.v}</div><div class="k">${x.k}</div></div>`).join("");
+    $("stat-cards").innerHTML = stats.map(x =>
+      `<div class="stat"><div class="v">${x.v}</div><div class="k">${x.k}<i class="tip" tabindex="0" data-tip="${esc(x.tip)}"></i></div><div class="sub">${x.sub}</div></div>`).join("");
+
+    // plain-language TL;DR of the whole dashboard
+    const trend = drain.daily_net != null ? (drain.daily_net < -0.05
+      ? `the queue is <strong>shrinking</strong> by about ${Math.abs(drain.daily_net)} ship/day`
+      : drain.daily_net > 0.05
+        ? `the queue is <strong>growing</strong> by about ${drain.daily_net} ship/day`
+        : "the queue size is <strong>holding steady</strong>") : "queue trend unclear";
+    const clearsTxt = drain.clears_by
+      ? ` At this pace the current backlog would clear around <strong>${esc(drain.clears_by)}</strong> — if no new ships arrived (they will, so treat it as a direction, not a date).`
+      : "";
+    $("dashboard-tldr").innerHTML =
+      `Right now: <strong>${q.count || "?"}</strong> ships waiting · reviewers decide <strong>${drain.decisions_per_day_14d ?? "?"}</strong>/day · ${trend}.${clearsTxt}`;
 
     if (window.renderCharts) window.renderCharts(s);
+
+    // queue-depth interpretation
+    const dep = (s.series || {}).queue_depth || [];
+    if (dep.length > 1) {
+      const first = dep[0].n, last = dep[dep.length - 1].n;
+      const peak = Math.max(...dep.map(p => p.n));
+      const d0 = dep[0].d, d1 = dep[dep.length - 1].d;
+      $("depth-interp").innerHTML = `<span class="lead">How to read this</span>
+        Since ${esc(d0)}, the queue went from <strong>${first}</strong> to <strong>${last}</strong> waiting ships
+        (peak: <strong>${peak}</strong>). ${last < first ? "The backlog is smaller than it was — reviewers have been catching up." : "The backlog has grown — more ships have arrived than reviewers have decided."}`;
+    }
 
     // approval rates breakdown
     const o = s.outcomes || {};
@@ -336,13 +430,27 @@
     </ul>
     <p class="muted small">Needs-changes rate: ${Math.round((o.needs_changes || 0) * 100)}% · Fraud-related rejections: ${Math.round((o.fraud_rejection || 0) * 100)}%</p>`;
 
+    const approveInterp = $("approval-interp");
+    if (approveInterp) {
+      const nc = o.needs_changes || 0;
+      approveInterp.innerHTML =
+        `About <strong>${Math.round((o.approval || 0) * 100)}%</strong> of decided ships get approved.
+         ${nc > 0.12 ? `But <strong>${Math.round(nc * 100)}%</strong> are asked for changes first — that's not a rejection: you revise, resubmit, and rejoin the queue (your wait clock starts over).` : "Few ships are asked for changes."}
+         Rejections are rare (${Math.round((o.rejected || 0) * 100)}%), and most affect zero-hour or minimal-effort ships.`;
+    }
+
     // composition
     const ships = q.ships || [];
     const byLevel = {};
     ships.forEach(x => byLevel[x.level] = (byLevel[x.level] || 0) + 1);
+    const hoursList = ships.map(x => x.hours || 0).filter(h => h != null);
+    hoursList.sort((a, b) => a - b);
+    const medH = hoursList.length ? Math.round(hoursList[Math.floor(hoursList.length / 2)] * 10) / 10 : null;
+    const bigShips = hoursList.filter(h => h >= 100).length;
     $("composition-body").innerHTML = `<ul class="clean">` +
       Object.keys(byLevel).sort().map(l => `<li>Level ${esc(l)}: ${byLevel[l]} waiting</li>`).join("") +
-      `</ul><p class="muted small">${ships.length} ships · median hours ${fmtH(median(ships.map(x => x.hours || 0)))}</p>`;
+      `</ul><p class="muted small">${ships.length} ships · median ${medH}h logged · ${bigShips} with 100h+</p>
+      ${medH != null && medH < 15 ? '<div class="interp"><span class="lead">Reading</span>Most waiting ships have few hours — reviewers can clear many of them in a single active day. Big-hour ships (like 100h+) are rarer and may get more careful, slower looks.</div>' : ""}`;
 
     // recent decisions
     $("recent-body").innerHTML = "<table><thead><tr><th>Project</th><th>Status</th><th>Waited</th><th>Decided</th></tr></thead><tbody>" +
@@ -356,7 +464,8 @@
     const rec = s.records || {};
     $("records-body").innerHTML = rec.longest_wait
       ? `<p>Longest wait decided: <strong>${fmtDays(rec.longest_wait.waited_d)}</strong> — ${esc(rec.longest_wait.name || "#" + rec.longest_wait.pid)} (${esc(rec.longest_wait.status)})</p>
-        <p>Fastest decision: <strong>${fmtDays(rec.fastest.waited_d)}</strong> — ${esc(rec.fastest.name || "#" + rec.fastest.pid)}</p>`
+        <p>Fastest decision: <strong>${fmtDays(rec.fastest.waited_d)}</strong> — ${esc(rec.fastest.name || "#" + rec.fastest.pid)}</p>
+        <p class="muted small">Range is the story: the same queue contains 1-hour approvals and 3-month waits. Claim-based review means your ship can land anywhere in that range.</p>`
       : "<p class='muted'>—</p>";
   }
 

@@ -24,6 +24,7 @@ Usage:
 import argparse
 import json
 import os
+import socket
 import sys
 import time
 import urllib.error
@@ -44,9 +45,10 @@ LAST_PEEK_FRONTIER = 30000  # project IDs above this are assumed nonexistent
 class Fetcher:
     def __init__(self, spacing=None, dry=False, quiet=False, workers=1):
         self.workers = max(1, workers)
-        # shared throttle keeps TOTAL request rate under the API limit:
-        # spacing shrinks as workers are added so workers * rate <= ~1.8 req/s
-        self.spacing = spacing if spacing is not None else min(SPACING, 1.1 / self.workers)
+        # The throttle is SHARED: spacing is the minimum gap between any two
+        # requests across all workers, so total rate = 1/spacing regardless
+        # of worker count. Workers only overlap network latency, never rate.
+        self.spacing = spacing if spacing is not None else SPACING
         self.dry = dry
         self.quiet = quiet
         self.last = 0.0
@@ -68,13 +70,15 @@ class Fetcher:
                                      headers={"User-Agent": UA, "Accept": "application/json"})
         for attempt in range(retries):
             try:
-                with urllib.request.urlopen(req, timeout=30) as r:
-                    body = r.read()
-                    self.n_ok += 1
-                    try:
-                        return r.status, json.loads(body)
-                    except json.JSONDecodeError:
-                        return r.status, None
+                # hard wall-clock deadline on the WHOLE request: a half-open
+                # socket can hang urlopen's read despite the timeout arg
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    body = r.read(2_000_000)
+                self.n_ok += 1
+                try:
+                    return r.status, json.loads(body)
+                except json.JSONDecodeError:
+                    return r.status, None
             except urllib.error.HTTPError as e:
                 if e.code in (429, 500, 502, 503, 504) and attempt < retries - 1:
                     retry_after = e.headers.get("Retry-After")
@@ -84,7 +88,7 @@ class Fetcher:
                     continue
                 self.n_err += 1
                 return e.code, None
-            except (urllib.error.URLError, TimeoutError, OSError) as e:
+            except (urllib.error.URLError, TimeoutError, OSError, socket.timeout) as e:
                 if attempt < retries - 1:
                     time.sleep(2 ** (attempt + 1))
                     continue
@@ -105,6 +109,9 @@ class Fetcher:
         else:
             self._throttle()
             self.last = time.monotonic()
+        total = self.n_ok + self.n_err + 1
+        if not self.quiet and total % 200 == 0:
+            self.log(f"  … {total} requests ({self.n_err} err) [{path}]")
         return self._get_once(path, retries)
 
 
@@ -292,6 +299,23 @@ def dedupe_ships(all_ships):
     return list(seen.values())
 
 
+def merge_ships(baseline, fresh):
+    """Ship-level merge: fresh records win (status/timestamps); baseline fills
+    metadata the fresh record lacks (name/level/type/owner); baseline-only
+    ships (scan didn't re-see them, e.g. deleted projects) are preserved."""
+    base_by_id = {s["id"]: s for s in baseline}
+    out = []
+    for s in fresh:
+        b = base_by_id.pop(s.get("id"), None)
+        if b:
+            for k in ("name", "owner", "level", "type"):
+                if not s.get(k) and b.get(k):
+                    s[k] = b[k]
+        out.append(s)
+    out.extend(base_by_id.values())
+    return out
+
+
 # ------------------------------------------------------------------- main
 
 
@@ -359,6 +383,22 @@ def run(args):
         fetch.log(f"scanning explicit ID range {lo}..{hi}")
         pids, all_ships = scan_id_range(fetch, lo, hi)
         meta = {}
+    elif args.full_scan:
+        # Complete ID-space sweep: probe EVERY project ID from 1 (or the
+        # previous scan frontier) to the live frontier. 404s are cheap
+        # (deleted projects); guarantees no project is missed. Merged with
+        # the committed corpus so enrichment metadata is never lost.
+        fetch.log("FULL ID-SPACE SCAN")
+        frontier = find_frontier(fetch, max(baseline and max(s.get("pid") or 0 for s in baseline) or 1, 1))
+        lo = max(1, args.from_id)
+        fetch.log(f"scanning {lo}..{frontier}")
+        spids, sships = scan_id_range(fetch, lo, frontier)
+        fetch.log(f"scan: {len(spids)} projects with ships, {len(sships)} ship records")
+        gpids, gmeta = projects_from_gallery(fetch)
+        meta = gmeta
+        all_ships = merge_ships(baseline, sships)
+        pids = {s.get("pid") for s in all_ships} | set(spids)
+        fetch.log(f"merged corpus: {len(all_ships)} ships")
     elif args.nightly and baseline:
         # Fast nightly path (a few hundred requests): refresh only what can
         # have changed — waiting ships, the recent-ID window up to the live
@@ -488,6 +528,10 @@ def main():
                     help="concurrent fetch workers sharing one throttle (keeps total rate under limits)")
     ap.add_argument("--nightly", action="store_true",
                     help="fast delta mode: refresh waiting ships + recent window only (needs ships.ndjson corpus)")
+    ap.add_argument("--full-scan", action="store_true",
+                    help="complete ID-space sweep: probe every project ID from --from-id to the live frontier")
+    ap.add_argument("--from-id", type=int, default=1,
+                    help="starting project ID for --full-scan (default 1)")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 

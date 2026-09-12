@@ -111,3 +111,41 @@ canvas { max-width: 100%; }
   border-radius: 8px; padding: 8px 12px; font-size: 0.9rem;
 }
 footer { margin-top: 30px; border-top: 1px solid var(--border); padding-top: 14px; }
+
+/* ---- metric explanations ---- */
+.stat .sub { color: var(--muted); font-size: 0.72rem; margin-top: 2px; line-height: 1.35; }
+
+.tip {
+  display: inline-block; width: 15px; height: 15px; line-height: 15px; text-align: center;
+  border-radius: 50%; background: var(--card2); border: 1px solid var(--border);
+  color: var(--muted); font-size: 10px; font-style: normal; cursor: help;
+  margin-left: 6px; vertical-align: middle; position: relative;
+}
+.tip:hover, .tip:focus { color: var(--accent); border-color: var(--accent); outline: none; }
+.tip::after {
+  content: attr(data-tip);
+  position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  background: #0b0d13; color: var(--text); border: 1px solid var(--accent);
+  padding: 8px 11px; border-radius: 8px; font-size: 0.78rem; font-weight: 400;
+  width: 240px; max-width: 60vw; text-align: left; z-index: 50;
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity .12s; line-height: 1.4;
+}
+.tip:hover::after, .tip:focus::after { opacity: 1; visibility: visible; }
+
+.interp {
+  margin-top: 12px; padding: 10px 14px; border-radius: 8px; font-size: 0.9rem;
+  background: rgba(122, 162, 247, 0.06); border: 1px solid rgba(122, 162, 247, 0.22);
+  color: var(--text);
+}
+.interp strong { color: var(--accent); }
+.interp .lead { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; display: block; margin-bottom: 3px; }
+
+.readhow { color: var(--muted); font-size: 0.82rem; margin-top: 6px; }
+.readhow b { color: var(--text); font-weight: 600; }
+
+.bars { margin: 6px 0; }
+.bar { display: flex; align-items: center; gap: 10px; margin: 7px 0; }
+.bar .track { flex: 1; height: 14px; background: var(--card2); border-radius: 7px; overflow: hidden; }
+.bar .fill { height: 100%; background: var(--accent); border-radius: 7px; }
+.bar .pct { min-width: 38px; text-align: right; font-size: 0.85rem; color: var(--text); font-weight: 600; }

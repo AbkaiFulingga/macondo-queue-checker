@@ -52,11 +52,11 @@ def main():
     seeded = 0
     for s in ships:
         pid = s.get("pid")
-        if pid and pid not in cache and s.get("type"):
-            cache[pid] = {k: s.get(k) for k in scrape.META_FILL_KEYS + scrape.META_LIVE_KEYS}
+        if pid and str(pid) not in cache and s.get("type"):
+            cache[str(pid)] = {k: s.get(k) for k in scrape.META_FILL_KEYS + scrape.META_LIVE_KEYS}
             seeded += 1
     pids = {s.get("pid") for s in ships}
-    missing = sorted(p for p in pids if p not in cache)
+    missing = sorted(p for p in pids if str(p) not in cache)
     print(f"corpus: {len(ships)} ships / {len(pids)} projects"
           f" | cached: {len(cache)} (seeded {seeded}) | missing meta: {len(missing)}",
           file=sys.stderr)

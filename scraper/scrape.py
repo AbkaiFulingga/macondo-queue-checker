@@ -331,12 +331,15 @@ WAITING_STATUSES = ("under_review", "pending_second_pass", "pending_fraud_review
 
 
 def load_meta_cache(path):
+    # JSON object keys are always strings, so the cache is keyed by str(pid)
+    # everywhere -- otherwise a reloaded cache misses every lookup and each run
+    # silently re-fetches every project.
     if path and os.path.exists(path):
         try:
             with open(path) as f:
                 data = json.load(f)
             if isinstance(data, dict):
-                return data
+                return {str(k): v for k, v in data.items()}
         except (ValueError, OSError):
             pass
     return {}
@@ -374,16 +377,14 @@ def enrich_with_project_meta(fetch, ships, cache=None, cache_path=None,
     need = {pid for pid, rs in by_pid.items()
             if refresh_waiting
             and any(s.get("status") in WAITING_STATUSES for s in rs)}
-    need |= {pid for pid in by_pid if pid not in cache}
-    if not need:
-        return ships
+    need |= {pid for pid in by_pid if str(pid) not in cache}
 
     def one(pid):
         code, data = fetch.get_json(f"/projects/{pid}")
         if code != 200 or not isinstance(data, dict):
             # a 404/410 is a real answer: remember it so we don't retry forever
-            return (pid, None) if code in (404, 410) else None
-        return pid, {
+            return (str(pid), None) if code in (404, 410) else None
+        return str(pid), {
             "name": data.get("name"),
             "level": str(data.get("level")) if data.get("level") else None,
             "type": data.get("type"),
@@ -407,7 +408,7 @@ def enrich_with_project_meta(fetch, ships, cache=None, cache_path=None,
                   file=sys.stderr, flush=True)
 
     for s in ships:
-        m = cache.get(s.get("pid"))
+        m = cache.get(str(s.get("pid")))
         if not m:
             continue
         waiting = s.get("status") in WAITING_STATUSES

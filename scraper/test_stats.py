@@ -348,6 +348,27 @@ class _FakeShipsAPI:
                      "reward_estimate_multiplier": 1.5}
 
 
+def test_enrich_applies_cache_without_fetching():
+    """A fully cached corpus must still be healed -- applying the cache and
+    fetching it are separate steps, and the fill used to sit behind an early
+    return that only ran when a fetch was needed."""
+    import scrape
+
+    cache = {"7": {"name": "P7", "level": "3", "type": "hardware",
+                   "owner": "u", "hours": 12.0, "mult": 1.5}}
+    s = ship(1, 0, 3, status="shipped", pid=7, type_=None)
+    s["name"] = None
+    fetch = _FakeShipsAPI()
+    out = scrape.enrich_with_project_meta(fetch, [s], cache=cache, cache_path=None)
+
+    assert fetch.calls == [], fetch.calls
+    assert out[0]["type"] == "hardware"
+    assert out[0]["name"] == "P7"
+    # a decided ship keeps its review-time hours, so the cached live values
+    # are not written over them
+    approx(out[0]["hours"], 10.0, 0.001)
+
+
 def test_enrich_gives_decided_ships_their_type_once():
     """Regression: decided ships used to stay untyped because only *waiting*
     ships were ever enriched, which skewed every per-type comparison."""
@@ -370,6 +391,33 @@ def test_enrich_gives_decided_ships_their_type_once():
     out2 = scrape.enrich_with_project_meta(fetch2, out, cache=cache, cache_path=None)
     assert fetch2.calls == [], fetch2.calls
     assert out2[0]["type"] == "hardware"
+
+
+def test_meta_cache_survives_a_save_load_round_trip():
+    """Regression: JSON object keys are strings, so an int-keyed in-process
+    cache missed every lookup after a reload and re-fetched the whole corpus
+    on every run (and blew up sorting mixed int/str keys on save)."""
+    import json
+    import tempfile
+    import scrape
+
+    s = ship(1, 0, 3, status="shipped", pid=7, type_=None)
+    fetch, cache = _FakeShipsAPI(), {}
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "project_meta.json")
+        scrape.enrich_with_project_meta(fetch, [s], cache=cache, cache_path=path)
+        assert fetch.calls == ["/projects/7"]
+
+        reloaded = scrape.load_meta_cache(path)
+        assert set(reloaded) == {"7"}, reloaded        # keys are strings
+        assert json.load(open(path))["7"]["type"] == "hardware"
+
+        # a fresh process must not re-fetch anything it already knows
+        fetch2 = _FakeShipsAPI()
+        out = scrape.enrich_with_project_meta(fetch2, [s], cache=reloaded,
+                                              cache_path=path)
+        assert fetch2.calls == [], fetch2.calls
+        assert out[0]["type"] == "hardware"
 
 
 def test_enrich_refreshes_live_fields_for_waiting_ships():

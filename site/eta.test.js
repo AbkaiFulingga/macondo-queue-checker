@@ -34,7 +34,13 @@ t("estimate returns rank + range for waiting ship", () => {
   if (est.central_days != null) {
     assert(est.range_low_d <= est.central_days, "range low above central");
     assert(est.range_high_d >= est.central_days, "range high below central");
+    assert(est.eta_date && est.eta_date.startsWith("2026-"), "eta_date not in 2026: " + est.eta_date);
   }
+});
+
+t("eta_date is not in the 1970s (seconds/ms bug)", () => {
+  const est = eta.estimate({ id: 99, status: "under_review", created_at: "2026-08-01T00:00:00Z" }, snap);
+  if (est.eta_date) assert(est.eta_date >= "2026-08-01", "eta_date in the past epoch: " + est.eta_date);
 });
 
 t("decided ship short-circuits", () => {

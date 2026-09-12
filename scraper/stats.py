@@ -622,6 +622,7 @@ def build_snapshot(all_ships, now=None):
             "id": s.get("id"), "pid": s.get("pid"), "name": s.get("name"),
             "owner": s.get("owner"), "level": s.get("level"),
             "type": s.get("type"), "hours": s.get("hours"),
+            "mult": s.get("mult"),
             "created_at": s.get("created_at"), "rank_by_age": i + 1,
         })
     snap = {
@@ -633,6 +634,7 @@ def build_snapshot(all_ships, now=None):
             "ships": queue_ships,
         },
         "series": {
+            "queue_depth": depth_history(all_ships, now=now),
             "decisions_daily": decisions_daily(decided, now=now),
             "arrivals_weekly": arrivals_weekly(all_ships, now=now),
             "front_progression": front_progression(decided, now=now),

@@ -301,16 +301,19 @@ def dedupe_ships(all_ships):
 
 def merge_ships(baseline, fresh):
     """Ship-level merge: fresh records win (status/timestamps); baseline fills
-    metadata the fresh record lacks (name/level/type/owner); baseline-only
-    ships (scan didn't re-see them, e.g. deleted projects) are preserved."""
+    metadata the fresh record lacks (name/level/type/owner/hours/mult);
+    baseline-only ships (scan didn't re-see them, e.g. deleted projects) are
+    preserved."""
     base_by_id = {s["id"]: s for s in baseline}
     out = []
     for s in fresh:
         b = base_by_id.pop(s.get("id"), None)
         if b:
-            for k in ("name", "owner", "level", "type"):
+            for k in ("name", "owner", "level", "type", "hours", "mult"):
                 if not s.get(k) and b.get(k):
                     s[k] = b[k]
+            if s.get("hours") is None and s.get("hackatime_hours") is not None:
+                s["hours"] = s["hackatime_hours"]
         out.append(s)
     out.extend(base_by_id.values())
     return out
@@ -339,6 +342,7 @@ def enrich_with_project_meta(fetch, ships):
             "type": data.get("type"),
             "owner": (data.get("owner") or {}).get("username") if isinstance(data.get("owner"), dict) else None,
             "hours": data.get("public_total_hours"),
+            "mult": data.get("reward_estimate_multiplier"),
         }
 
     fetched = {}
@@ -349,7 +353,7 @@ def enrich_with_project_meta(fetch, ships):
         m = fetched.get(s.get("pid"))
         if m:
             # fill only when missing OR null (setdefault skips null-valued keys)
-            for key in ("name", "level", "type", "owner"):
+            for key in ("name", "level", "type", "owner", "mult"):
                 if not s.get(key):
                     s[key] = m[key]
     return ships
@@ -483,6 +487,10 @@ def run(args):
         "fetch_stats": {"ok": fetch.n_ok, "err": fetch.n_err},
         "elapsed_s": round(time.time() - t0, 1),
     }
+    if args.full_scan:
+        # IDs probed vs 404s → how many live projects Macondo has in total
+        snap["meta"]["n_ids_probed"] = frontier - args.from_id + 1
+        snap["meta"]["n_live_projects_total"] = max(0, snap["meta"]["n_ids_probed"] - fetch.n_err)
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:

@@ -111,6 +111,11 @@ canvas { max-width: 100%; }
   border-radius: 8px; padding: 8px 12px; font-size: 0.9rem;
 }
 footer { margin-top: 30px; border-top: 1px solid var(--border); padding-top: 14px; }
+details.card > summary { cursor: pointer; color: var(--muted); list-style: none; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary::before { content: "▸ "; color: var(--accent); }
+details.card[open] > summary::before { content: "▾ "; }
+details.card > summary:hover { color: var(--accent); }
 
 /* ---- metric explanations ---- */
 .stat .sub { color: var(--muted); font-size: 0.72rem; margin-top: 2px; line-height: 1.35; }

@@ -110,7 +110,7 @@
       out.central_days = Math.round(central * 10) / 10;
       out.range_low_d = Math.round(Math.max(0.5, central - spread));
       out.range_high_d = Math.round(central + spread);
-      const etaMs = now + central * DAY * 1000;
+      const etaMs = (now + central * DAY) * 1000; // now is SECONDS; Date wants MS
       const fmt = new Date(etaMs).toISOString().slice(0, 10);
       out.eta_date = fmt;
     }

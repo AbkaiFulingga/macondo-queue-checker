@@ -83,6 +83,15 @@
     <p class="muted small" id="dashboard-tldr"></p>
 
     <div class="card">
+      <h2>When will ALL reviews be finished?
+        <i class="tip" tabindex="0" data-tip="Projection from the last 14 days: decisions/day vs new arrivals/day. If more ships arrive than get decided, the queue never empties — it grows. Ships also can't be decided faster than reviewers claim them."></i>
+      </h2>
+      <p class="readhow">How to read: <b>the line is the projected queue size week by week</b> if the recent pace continues. Going up = backlog growing forever; flattening = catching up; hitting zero = fully drained.</p>
+      <div id="drain-body"></div>
+      <canvas id="chart-drain" height="110"></canvas>
+    </div>
+
+    <div class="card">
       <h2>Queue depth over time
         <i class="tip" tabindex="0" data-tip="For each past date: how many ships had been submitted but not yet decided. Reconstructed from every ship's public submission and decision dates — Macondo publishes no queue history, so we rebuild it from the raw data."></i>
       </h2>
@@ -91,39 +100,39 @@
       <div class="interp" id="depth-interp"></div>
     </div>
 
-    <div class="grid2">
-      <div class="card">
-        <h2>Decisions per day
-          <i class="tip" tabindex="0" data-tip="How many ships got a reviewer decision (approved, rejected, or needs-changes) each day. This is the review team's throughput — the single best predictor of how fast the queue moves."></i>
-        </h2>
-        <p class="readhow">How to read: <b>tall bars = active review days</b>, gaps = quiet days. A steady ~2–4/day is healthy; weeks of near-zero mean a stalled queue.</p>
-        <canvas id="chart-decisions" height="140"></canvas>
+    <details class="card" id="advanced-charts">
+      <summary><h2 style="display:inline">More charts (for the curious)</h2></summary>
+      <div class="grid2">
+        <div class="card" style="margin-top:14px">
+          <h2>Decisions per day
+            <i class="tip" tabindex="0" data-tip="How many ships got a reviewer decision (approved, rejected, or needs-changes) each day. This is the review team's throughput — the single best predictor of how fast the queue moves."></i>
+          </h2>
+          <p class="readhow">How to read: <b>tall bars = active review days</b>, gaps = quiet days. Reviewers are volunteers — bursts of 5–10/day happen, so do quiet weeks.</p>
+          <canvas id="chart-decisions" height="140"></canvas>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <h2>Latency: days from submission to decision
+            <i class="tip" tabindex="0" data-tip="Latency = days between a ship's submission and its decision. The odd double-hump shape is real: some ships get claimed within hours, most wait through the backlog."></i>
+          </h2>
+          <p class="readhow">How to read: the <b>two humps are the two realities</b> of this queue — a fast lane (claimed within hours) and a backlog lane (weeks). You can't tell from outside which one you're in.</p>
+          <canvas id="chart-latency" height="140"></canvas>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <h2>Survival curve — % decided vs days waiting
+            <i class="tip" tabindex="0" data-tip="Of all ships ever submitted, the fraction that had received a decision within N days of submission. Ships still waiting count as 'not yet decided' at their current age."></i>
+          </h2>
+          <p class="readhow">How to read: <b>the curve is your wait-time odds</b>. At 30 days, 40% means: of 10 ships like yours, 4 were decided by day 30 — the other 6 kept waiting.</p>
+          <canvas id="chart-survival" height="140"></canvas>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <h2>Arrivals per week
+            <i class="tip" tabindex="0" data-tip="New ships submitted each week. Compare against decisions/day: if arrivals outpace decisions, the queue grows and every ETA gets longer."></i>
+          </h2>
+          <p class="readhow">How to read: <b>compare with the decisions chart</b>. Arrivals above decisions = growing backlog; below = shrinking.</p>
+          <canvas id="chart-arrivals" height="140"></canvas>
+        </div>
       </div>
-      <div class="card">
-        <h2>Latency: days from submission to decision
-          <i class="tip" tabindex="0" data-tip="Latency = days between a ship's submission and its decision. The odd double-hump shape is real: some ships get claimed within hours, most wait through the backlog."></i>
-        </h2>
-        <p class="readhow">How to read: the <b>two humps are the two realities</b> of this queue — a fast lane (claimed within hours) and a backlog lane (weeks). Your ship is in one or the other, and you can't tell which from outside.</p>
-        <canvas id="chart-latency" height="140"></canvas>
-      </div>
-    </div>
-
-    <div class="grid2">
-      <div class="card">
-        <h2>Survival curve — % decided vs days waiting
-          <i class="tip" tabindex="0" data-tip="Of all ships ever submitted, the fraction that had received a decision within N days of submission. Ships still waiting count as 'not yet decided' at their current age."></i>
-        </h2>
-        <p class="readhow">How to read: <b>the curve is your wait-time odds</b>. At 30 days, 40% means: of 10 ships like yours, 4 were decided by day 30 — the other 6 kept waiting.</p>
-        <canvas id="chart-survival" height="140"></canvas>
-      </div>
-      <div class="card">
-        <h2>Arrivals per week
-          <i class="tip" tabindex="0" data-tip="New ships submitted each week. Compare against decisions/day: if arrivals outpace decisions, the queue grows and every ETA gets longer."></i>
-        </h2>
-        <p class="readhow">How to read: <b>compare with the decisions chart</b>. Arrivals above decisions = growing backlog; below = shrinking. Summer spikes are typical (hackathon season).</p>
-        <canvas id="chart-arrivals" height="140"></canvas>
-      </div>
-    </div>
+    </details>
 
     <div class="grid2">
       <div class="card">

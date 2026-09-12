@@ -302,12 +302,21 @@
     if (est && est.decided) { $("gold-card").classList.add("hidden"); return; }
     const h = proj.public_total_hours;
     const rate = window.eta.GOLD_RATES[String(proj.level)] || 40;
-    const mult = proj.reward_estimate_multiplier || 1;
-    const g = window.eta.goldEstimate(h, proj.level, mult);
-    if (g == null) { $("gold-card").classList.add("hidden"); return; }
-    $("gold-body").innerHTML = `<p class="eta-range">${g.toLocaleString()} gold</p>
-      <p class="eta-sub">if approved: ${fmtH(h)} × ${rate}/hr (level ${esc(proj.level)}) × ${Math.round(mult * 100) / 100}× (streak multiplier)</p>
-      <p class="muted small">Where this comes from: Macondo pays a base rate per logged hour by project level (L1 40 · L2 45 · L3 50 · L4 60 gold/hour), multiplied by your streak bonus (${Math.round(mult * 100) / 100}× for your current streak). Your hours are the live Hackatime count, so this estimate grows if you keep working. The final amount is whatever the reviewer confirms — estimates are not commitments.</p>`;
+    const mult = proj.reward_estimate_multiplier;
+    if (h == null) { $("gold-card").classList.add("hidden"); return; }
+    const base = window.eta.goldEstimate(h, proj.level, 1.0);
+    let headline, sub;
+    if (mult) {
+      const g = window.eta.goldEstimate(h, proj.level, mult);
+      headline = `${g.toLocaleString()} gold`;
+      sub = `if approved: ${fmtH(h)}h × ${rate}/hr (level ${esc(proj.level)}) × ${Math.round(mult * 100) / 100}× (streak multiplier)`;
+    } else {
+      headline = `${base.toLocaleString()}+ gold`;
+      sub = `base rate: ${fmtH(h)}h × ${rate}/hr (level ${esc(proj.level)}) — before your streak bonus`;
+    }
+    $("gold-body").innerHTML = `<p class="eta-range">${headline}</p>
+      <p class="eta-sub">${sub}</p>
+      <p class="muted small">Where this comes from: Macondo pays a base rate per logged hour by project level (L1 40 · L2 45 · L3 50 · L4 60 gold/hour). Your streak bonus (shown on your Macondo project page — live lookups include it) multiplies that base. Your hours are the live Hackatime count, so this grows as you keep working. The final amount is whatever the reviewer confirms — estimates are not commitments.</p>`;
     $("gold-card").classList.remove("hidden");
   }
 
@@ -351,7 +360,7 @@
     // cohort + similar + gold all work from snapshot
     renderCohort(active, est);
     const fakeProj = { public_total_hours: meta.hours, level: meta.level,
-                       reward_estimate_multiplier: 1, project_streak_days: null,
+                       reward_estimate_multiplier: meta.mult, project_streak_days: null,
                        name: meta.name, id: meta.pid };
     renderSimilar(active, fakeProj, [], est);
     renderGold(fakeProj, est);
@@ -407,6 +416,24 @@
 
     if (window.renderCharts) window.renderCharts(s);
 
+    // drain verdict — the honest answer to "when will ALL reviews finish?"
+    const drainEl = $("drain-body");
+    if (drainEl) {
+      const dps = drain.decisions_per_day_14d, aps = drain.arrivals_per_day_14d;
+      const net = drain.daily_net;
+      let verdict, color;
+      if (net == null) { verdict = "Not enough recent data to project."; color = "var(--muted)"; }
+      else if (net <= 0) {
+        verdict = `The queue is <strong>shrinking</strong> by ~${Math.abs(net).toFixed(1)} ships/day.` +
+          (drain.clears_by ? ` At this pace the backlog <strong>fully clears around ${esc(drain.clears_by)}</strong>.` : " It keeps shrinking but doesn't hit zero within the projection window.");
+        color = "var(--ok)";
+      } else {
+        verdict = `The queue is <strong>growing</strong> by ~${net.toFixed(1)} ships/day (${aps?.toFixed?.(1) ?? "?"} arriving vs ${dps?.toFixed?.(1) ?? "?"} decided each day). <strong>At this pace the backlog never fully drains</strong> — new ships arrive faster than reviewers decide them. In practice this means long waits until reviewer capacity picks up (it swings a lot: bursts of 5–10/day happen).`;
+        color = "var(--danger)";
+      }
+      drainEl.innerHTML = `<div class="interp" style="border-color:${color}"><span class="lead">The honest answer</span>${verdict}</div>`;
+    }
+
     // queue-depth interpretation
     const dep = (s.series || {}).queue_depth || [];
     if (dep.length > 1) {
@@ -439,7 +466,7 @@
          Rejections are rare (${Math.round((o.rejected || 0) * 100)}%), and most affect zero-hour or minimal-effort ships.`;
     }
 
-    // composition
+    // composition — also answers "why only 1,384 when Macondo has 12k+ projects?"
     const ships = q.ships || [];
     const byLevel = {};
     ships.forEach(x => byLevel[x.level] = (byLevel[x.level] || 0) + 1);
@@ -447,9 +474,11 @@
     hoursList.sort((a, b) => a - b);
     const medH = hoursList.length ? Math.round(hoursList[Math.floor(hoursList.length / 2)] * 10) / 10 : null;
     const bigShips = hoursList.filter(h => h >= 100).length;
+    const totalLive = (s.meta && s.meta.n_live_projects_total) || null;
     $("composition-body").innerHTML = `<ul class="clean">` +
       Object.keys(byLevel).sort().map(l => `<li>Level ${esc(l)}: ${byLevel[l]} waiting</li>`).join("") +
       `</ul><p class="muted small">${ships.length} ships · median ${medH}h logged · ${bigShips} with 100h+</p>
+      <div class="interp"><span class="lead">Why "only" ${ships.length}?</span> Macondo has ~${totalLive ? totalLive.toLocaleString() : "12,000"} projects — but the queue counts <strong>ships awaiting review</strong>, not projects. Most projects have never been submitted for review; of those that have, almost all are already decided (${(s.pipeline && s.pipeline.shipped) || "?"} shipped so far). What's left is the ${ships.length}-ship line you're in.</div>
       ${medH != null && medH < 15 ? '<div class="interp"><span class="lead">Reading</span>Most waiting ships have few hours — reviewers can clear many of them in a single active day. Big-hour ships (like 100h+) are rarer and may get more careful, slower looks.</div>' : ""}`;
 
     // recent decisions

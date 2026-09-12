@@ -26,6 +26,25 @@
 
   window.renderCharts = function (snap) {
     const s = snap.series || {};
+    const drain = snap.drain || {};
+
+    // drain projection (line): projected queue depth week by week
+    const dp = drain.path || [];
+    if (dp.length) {
+      make("chart-drain", {
+        type: "line",
+        data: {
+          labels: dp.map(p => "+" + p.d + "d"),
+          datasets: [{
+            data: dp.map(p => p.depth),
+            borderColor: dp[dp.length - 1].depth <= dp[0].depth ? C.ok : C.danger,
+            borderWidth: 2, pointRadius: 0, tension: 0.15,
+            fill: { target: "origin", backgroundColor: "rgba(247,118,142,.08)" },
+          }],
+        },
+        options: base,
+      });
+    }
 
     // queue depth (line)
     make("chart-depth", {

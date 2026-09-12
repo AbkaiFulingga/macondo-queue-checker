@@ -379,24 +379,39 @@
 
   // ---------------------------------------------------------- dashboard
 
+  let ACTIVE_TYPE = "all";
+
+  function bundleFor(t) {
+    if (SNAP && SNAP.by_type && SNAP.by_type[t]) return SNAP.by_type[t];
+    // fallback for older snapshots without by_type
+    return {
+      queue_count: SNAP.queue.count,
+      series: SNAP.series, latency: SNAP.latency,
+      outcomes: SNAP.outcomes, drain: SNAP.drain,
+      type_coverage: null,
+    };
+  }
+
   function renderDashboard() {
     const s = SNAP;
     if (!s) return;
-    const lat = s.latency || {};
+    const b = bundleFor(ACTIVE_TYPE);
+    const lat = b.latency || {};
     const q = s.queue || {};
-    const drain = s.drain || {};
+    const drain = b.drain || {};
+    const typeLabel = ACTIVE_TYPE === "all" ? "" : (ACTIVE_TYPE === "software" ? "software" : "hardware");
     const stats = [
-      { v: q.count || 0, k: "ships in queue",
-        sub: "submitted, waiting on a reviewer right now", tip: "Every ship that has been submitted for review but hasn't received a decision. This is the whole line you're in — reconstructed from public data, so it may miss a few ships on private/hidden projects." },
+      { v: b.queue_count != null ? b.queue_count : (q.count || 0), k: "ships in queue",
+        sub: typeLabel ? typeLabel + " ships waiting right now" : "submitted, waiting on a reviewer right now", tip: "Every ship that has been submitted for review but hasn't received a decision. This is the whole line you're in — reconstructed from public data, so it may miss a few ships on private/hidden projects." },
       { v: q.oldest_days != null ? Math.round(q.oldest_days) + "d" : "—", k: "longest wait",
-        sub: "the oldest ship still waiting", tip: "How long the most patient ship has been in line. The higher this is, the more behind the review team is — a healthy queue keeps this under 2–3 weeks." },
+        sub: "the oldest ship still waiting (all types)", tip: "How long the most patient ship has been in line. The higher this is, the more behind the review team is — a healthy queue keeps this under 2–3 weeks." },
       { v: q.front_date || "—", k: "review front",
-        sub: "reviewers are deciding ships submitted around then", tip: "The submission date of the oldest waiting ship. Decisions being made today are typically for ships submitted around this date — it's where the review 'front' has reached in the backlog." },
+        sub: "oldest waiting submission (all types)", tip: "The submission date of the oldest waiting ship. Decisions being made today are typically for ships submitted around this date — it's where the review 'front' has reached in the backlog." },
       { v: drain.decisions_per_day_14d != null ? drain.decisions_per_day_14d : "—", k: "decisions/day",
-        sub: "reviewer pace over the last 14 days", tip: "Average ships decided per day over the trailing two weeks. Reviewers are volunteers — this varies a lot week to week (bursts of 5–10/day happen, so do quiet weeks)." },
+        sub: typeLabel ? typeLabel + " pace, last 14 days" : "reviewer pace over the last 14 days", tip: "Average ships decided per day over the trailing two weeks. Reviewers are volunteers — this varies a lot week to week (bursts of 5–10/day happen, so do quiet weeks)." },
       { v: lat.median_days != null ? Math.round(lat.median_days) + "d" : "—", k: "median wait",
-        sub: "half of decided ships waited this long", tip: "The middle of the distribution: half of all decided ships waited less than this, half waited more. Based on every decided ship in our data, not just recent ones." },
-      { v: Math.round((s.outcomes.approval || 0) * 100) + "%", k: "approval rate",
+        sub: typeLabel ? "median for decided " + typeLabel + " ships" : "half of decided ships waited this long", tip: "The middle of the distribution: half of all decided ships waited less than this, half waited more. Based on every decided ship in our data, not just recent ones." },
+      { v: b.outcomes && b.outcomes.approval != null ? Math.round(b.outcomes.approval * 100) + "%" : (s.outcomes.approval != null ? Math.round(s.outcomes.approval * 100) + "%" : "—"), k: "approval rate",
         sub: "of ships that got a decision", tip: "Among ships that received any decision, the share approved. The rest were rejected or asked for changes. Your odds depend on your hours, level, and documentation — see the approval breakdown below." },
     ];
     $("stat-cards").innerHTML = stats.map(x =>
@@ -408,13 +423,18 @@
       : drain.daily_net > 0.05
         ? `the queue is <strong>growing</strong> by about ${drain.daily_net} ship/day`
         : "the queue size is <strong>holding steady</strong>") : "queue trend unclear";
-    const clearsTxt = drain.clears_by
-      ? ` At this pace the current backlog would clear around <strong>${esc(drain.clears_by)}</strong> — if no new ships arrived (they will, so treat it as a direction, not a date).`
-      : "";
+    let clearsTxt;
+    if (drain.gate_closed && drain.clears_by) {
+      clearsTxt = ` With the submission gate closed and nothing new arriving, <strong>all reviews should finish around ${esc(drain.clears_by)}</strong> at this pace.`;
+    } else {
+      clearsTxt = drain.clears_by
+        ? ` At this pace the current backlog would clear around <strong>${esc(drain.clears_by)}</strong>.`
+        : "";
+    }
     $("dashboard-tldr").innerHTML =
-      `Right now: <strong>${q.count || "?"}</strong> ships waiting · reviewers decide <strong>${drain.decisions_per_day_14d ?? "?"}</strong>/day · ${trend}.${clearsTxt}`;
+      `Right now: <strong>${b.queue_count != null ? b.queue_count : "?"}</strong>${typeLabel ? " " + typeLabel : ""} ships waiting · reviewers decide <strong>${drain.decisions_per_day_14d ?? "?"}</strong>/day · ${trend}.${clearsTxt}`;
 
-    if (window.renderCharts) window.renderCharts(s);
+    if (window.renderCharts) window.renderCharts({ series: b.series, drain: b.drain });
 
     // ---- big picture: every project on Macondo, accounted for
     const pipe = s.pipeline || {};
@@ -456,7 +476,18 @@
       const dps = drain.decisions_per_day_14d, aps = drain.arrivals_per_day_14d;
       const net = drain.daily_net;
       let verdict, color;
-      if (net == null) { verdict = "Not enough recent data to project."; color = "var(--muted)"; }
+      if (drain.gate_closed) {
+        verdict = `The submission gate has closed — <strong>no new ships are arriving</strong>, so the queue is final at <strong>${drain.gate_closed ? (b.queue_count != null ? b.queue_count : "?") : "?"} ships</strong>. ` +
+          (drain.clears_by
+            ? `Reviewers are deciding ~${dps ?? "?"}/day, which means <strong>all reviews should finish around ${esc(drain.clears_by)}</strong> (roughly ${Math.round((b.queue_count || 0) / Math.max(dps || 1, 0.1))} days at this pace).`
+            : `At the current pace of ~${dps ?? "?"}/day there's no finish date yet — the pace is too slow to project.`);
+        verdict += ` Reviewer pace has historically swung 4× (sustained 5–6/day pushes in August vs quiet weeks), so treat the date as a midpoint, not a promise.`;
+        if (typeLabel && b.type_coverage && b.type_coverage.total) {
+          const covPct = Math.round(b.type_coverage.typed / b.type_coverage.total * 100);
+          verdict += ` <span class="muted">Type breakdowns use the ${covPct}% of decided ships with known type — the real pace for ${typeLabel} may differ.</span>`;
+        }
+        color = "var(--ok)";
+      } else if (net == null) { verdict = "Not enough recent data to project."; color = "var(--muted)"; }
       else if (net <= 0) {
         verdict = `The queue is <strong>shrinking</strong> by ~${Math.abs(net).toFixed(1)} ships/day.` +
           (drain.clears_by ? ` At this pace the backlog <strong>fully clears around ${esc(drain.clears_by)}</strong>.` : " It keeps shrinking but doesn't hit zero within the projection window.");
@@ -469,7 +500,7 @@
     }
 
     // queue-depth interpretation
-    const dep = (s.series || {}).queue_depth || [];
+    const dep = (b.series || {}).queue_depth || [];
     if (dep.length > 1) {
       const first = dep[0].n, last = dep[dep.length - 1].n;
       const peak = Math.max(...dep.map(p => p.n));
@@ -479,8 +510,8 @@
         (peak: <strong>${peak}</strong>). ${last < first ? "The backlog is smaller than it was — reviewers have been catching up." : "The backlog has grown — more ships have arrived than reviewers have decided."}`;
     }
 
-    // approval rates breakdown
-    const o = s.outcomes || {};
+    // approval rates breakdown (follows the type toggle)
+    const o = b.outcomes || {};
     const cell = (label, obj) => obj && obj.n
       ? `<li>${label}: <strong>${Math.round(obj.approval * 100)}%</strong> <span class="muted small">(n=${obj.n})</span></li>` : "";
     $("approval-body").innerHTML = `<ul class="clean">
@@ -545,5 +576,17 @@
       e.preventDefault();
       handleSearch($("search-input").value);
     });
+    // type toggle: re-render type-sensitive stats + charts
+    const tt = $("type-toggle");
+    if (tt) {
+      tt.querySelectorAll("button").forEach(btn => {
+        btn.addEventListener("click", () => {
+          if (btn.dataset.t === ACTIVE_TYPE) return;
+          ACTIVE_TYPE = btn.dataset.t;
+          tt.querySelectorAll("button").forEach(b => b.classList.toggle("active", b === btn));
+          if (SNAP) renderDashboard();
+        });
+      });
+    }
   });
 })();

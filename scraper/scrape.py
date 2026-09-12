@@ -480,7 +480,7 @@ def run(args):
     all_ships = enrich_with_project_meta(fetch, all_ships)
 
     # ---- snapshot
-    snap = stats.build_snapshot(all_ships)
+    snap = stats.build_snapshot(all_ships, gate_closed=args.gate_closed)
     snap["meta"] = {
         "n_projects": len(pids),
         "n_ships": len(all_ships),
@@ -517,7 +517,7 @@ def run(args):
     return snap
 
 
-def run_offline(out_path):
+def run_offline(out_path, gate_closed=True):
     """Build snapshot from the seed corpus (no network)."""
     seed = os.path.join(HERE, "seed_ships.ndjson")
     ships = []
@@ -525,7 +525,7 @@ def run_offline(out_path):
         for line in f:
             if line.strip():
                 ships.append(json.loads(line))
-    snap = stats.build_snapshot(ships)
+    snap = stats.build_snapshot(ships, gate_closed=gate_closed)
     snap["meta"] = {"n_projects": len({s.get("pid") for s in ships}),
                     "n_ships": len(ships), "offline_seed": True}
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
@@ -550,6 +550,10 @@ def main():
                     help="complete ID-space sweep: probe every project ID from --from-id to the live frontier")
     ap.add_argument("--from-id", type=int, default=1,
                     help="starting project ID for --full-scan (default 1)")
+    ap.add_argument("--gate-closed", action="store_true", default=True,
+                    help="submission gate is closed: no new ships arriving; drain assumes arrivals=0 (default on)")
+    ap.add_argument("--gate-open", dest="gate_closed", action="store_false",
+                    help="override: submissions still possible")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 

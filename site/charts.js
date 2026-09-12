@@ -21,7 +21,14 @@
   function make(id, cfg) {
     const el = document.getElementById(id);
     if (!el || typeof Chart === "undefined") return;
-    new Chart(el, cfg);
+    try {
+      // re-rendering on type-toggle: destroy the old chart or Chart.js throws
+      const existing = Chart.getChart(el);
+      if (existing) existing.destroy();
+      new Chart(el, cfg);
+    } catch (e) {
+      (window.__chartErrs = window.__chartErrs || []).push(id + ": " + e.message);
+    }
   }
 
   window.renderCharts = function (snap) {

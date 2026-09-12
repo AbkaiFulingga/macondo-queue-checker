@@ -520,16 +520,31 @@ def cohort_table(all_ships, now=None):
     return out
 
 
-def drain_projection(waiting_count, decided_ships, all_ships, now=None, horizon_days=120):
-    """Project queue clearance from net flow (decisions - arrivals, recent)."""
+def drain_projection(waiting_count, decided_ships, all_ships, now=None,
+                     horizon_days=180, gate_closed=False, gate_after_days=3):
+    """Project queue clearance.
+
+    If the submission gate is closed (no new ships for gate_after_days),
+    arrivals going forward are zero: the queue drains at decisions/day.
+    Otherwise use recent net flow (arrivals vs decisions).
+    """
     now = now.timestamp() if isinstance(now, datetime) else (now or datetime.now(timezone.utc).timestamp())
     dec14 = decisions_daily(decided_ships, days=14, now=now)
     decisions_per_day = (sum(p["n"] for p in dec14) / 14.0) if dec14 else 0.0
     arr14 = [s for s in all_ships
              if (c := parse_ts(s.get("created_at"))) is not None
              and (now - c) / DAY <= 14]
-    arrivals_per_day = len(arr14) / 14.0
-    net = arrivals_per_day - decisions_per_day  # queue growth per day
+    arrivals_per_day_14d = len(arr14) / 14.0
+    newest_age = None
+    created = [parse_ts(s.get("created_at")) for s in all_ships if s.get("created_at")]
+    if created:
+        newest_age = round((now - max(created)) / DAY, 1)
+    gate_closed = gate_closed or (newest_age is not None and newest_age > gate_after_days)
+    if gate_closed:
+        arrivals_per_day = 0.0
+    else:
+        arrivals_per_day = arrivals_per_day_14d
+    net = arrivals_per_day - decisions_per_day
     path = []
     depth = waiting_count
     d = 0
@@ -545,7 +560,9 @@ def drain_projection(waiting_count, decided_ships, all_ships, now=None, horizon_
                       .strftime("%Y-%m-%d"))
     return {
         "decisions_per_day_14d": round(decisions_per_day, 2),
-        "arrivals_per_day_14d": round(arrivals_per_day, 2),
+        "arrivals_per_day_14d": round(arrivals_per_day_14d, 2),
+        "gate_closed": gate_closed,
+        "newest_submission_age_days": newest_age,
         "daily_net": round(net, 2),
         "clears_by": clears,
         "path": path,
@@ -606,7 +623,33 @@ def similar_ships(mine, decided_ships, limit=5):
 # ------------------------------------------------------------ snapshot
 
 
-def build_snapshot(all_ships, now=None):
+def _type_stats(all_ships, now, gate_closed):
+    """Per-project-type stat bundle (same shape for 'all', 'software', 'hardware')."""
+    decided = [s for s in all_ships if is_decided(s)]
+    waiting = [s for s in all_ships if is_waiting(s)]
+    q = queue_stats(waiting, now=now)
+    return {
+        "queue_count": q["count"],
+        "decided_count": len(decided),
+        "series": {
+            "queue_depth": depth_history(all_ships, now=now),
+            "decisions_daily": decisions_daily(decided, now=now),
+            "arrivals_weekly": arrivals_weekly(all_ships, now=now),
+            "latency_hist": latency_histogram(decided),
+            "survival": survival_curve(all_ships, now=now),
+        },
+        "latency": latency_stats(decided),
+        "outcomes": outcome_stats(decided),
+        "drain": drain_projection(q["count"], decided, all_ships,
+                                  now=now, gate_closed=gate_closed),
+        "type_coverage": {
+            "typed": sum(1 for s in all_ships if s.get("type")),
+            "total": len(all_ships),
+        },
+    }
+
+
+def build_snapshot(all_ships, now=None, gate_closed=True):
     """Assemble the full snapshot consumed by the site."""
     now_dt = now or datetime.now(timezone.utc)
     now = now_dt.timestamp()
@@ -653,6 +696,12 @@ def build_snapshot(all_ships, now=None):
             for s in sorted(decided, key=lambda s: parse_ts(s.get("reviewed_at")) or 0)[-20:][::-1]
         ],
         "records": records(decided),
-        "drain": drain_projection(q["count"], decided, all_ships, now=now),
+        "drain": drain_projection(q["count"], decided, all_ships, now=now,
+                                  gate_closed=gate_closed),
+        "by_type": {
+            "all": _type_stats(all_ships, now, gate_closed),
+            "software": _type_stats([s for s in all_ships if s.get("type") == "software"], now, gate_closed),
+            "hardware": _type_stats([s for s in all_ships if s.get("type") == "hardware"], now, gate_closed),
+        },
     }
     return snap

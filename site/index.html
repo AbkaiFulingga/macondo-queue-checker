@@ -6,7 +6,7 @@
 <title>Macondo Queue Checker — how long until your project gets reviewed?</title>
 <meta name="description" content="Check your Macondo project's review queue position and estimated review time, with live status and pipeline statistics from public data.">
 <link rel="stylesheet" href="style.css">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous" defer></script>
 <script src="eta.js" defer></script>
 <script src="charts.js" defer></script>
 <script src="app.js" defer></script>
@@ -81,6 +81,13 @@
   <section id="dashboard">
     <div class="stat-row" id="stat-cards"></div>
     <p class="muted small" id="dashboard-tldr"></p>
+
+    <div class="type-toggle" id="type-toggle" role="group" aria-label="Filter stats by project type">
+      <span class="muted small">Show stats for:</span>
+      <button data-t="all" class="active">All projects</button>
+      <button data-t="software">Software</button>
+      <button data-t="hardware">Hardware</button>
+    </div>
 
     <!-- ================= BIG PICTURE ================= -->
     <section class="card">

@@ -117,6 +117,15 @@ details.card > summary::before { content: "▸ "; color: var(--accent); }
 details.card[open] > summary::before { content: "▾ "; }
 details.card > summary:hover { color: var(--accent); }
 
+/* ---- type toggle ---- */
+.type-toggle { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.type-toggle button {
+  background: var(--card2); color: var(--muted); border: 1px solid var(--border);
+  border-radius: 20px; padding: 6px 16px; font-size: 0.85rem; cursor: pointer; font-weight: 600;
+}
+.type-toggle button:hover { color: var(--text); border-color: var(--accent); }
+.type-toggle button.active { background: var(--accent); color: #0d1220; border-color: var(--accent); }
+
 /* ---- big picture ---- */
 .bigpicture { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .bp-card { background: var(--card2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }

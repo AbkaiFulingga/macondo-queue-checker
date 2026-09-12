@@ -25,7 +25,8 @@
       const r = await fetch("data/snapshot.json");
       SNAP = await r.json();
       renderDashboard();
-      $("snapshot-age").textContent = "as of " + (SNAP.generated_at || "?").replace("T", " ").replace("Z", " UTC");
+      // one formatter for every time on the page, so they can't drift apart
+      $("snapshot-age").textContent = "as of " + (SNAP.generated_at ? fmtUTC(SNAP.generated_at, true) : "?");
     } catch (e) {
       $("snapshot-age").textContent = "unavailable";
       $("search-msg").textContent = "Could not load queue snapshot — dashboard offline, live lookup may still work.";

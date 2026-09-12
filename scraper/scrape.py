@@ -17,7 +17,9 @@ backoff honoring Retry-After on 429/5xx, single User-Agent with contact.
 Usage:
   python3 scrape.py                    # full run
   python3 scrape.py --max-users 5      # smoke test: first 5 users only
-  python3 scrape.py --ids 15800:15830  # scan an explicit project-ID range
+  python3 scrape.py --ids 15800:15830  # refresh an explicit ID range (merges
+                                       # into the committed corpus; never a
+                                       # replacement for it)
   python3 scrape.py --offline          # build snapshot from seed corpus only
 """
 
@@ -449,8 +451,16 @@ def run(args):
         lo_s, hi_s = args.ids.split(":")
         lo, hi = int(lo_s), int(hi_s)
         fetch.log(f"scanning explicit ID range {lo}..{hi}")
-        pids, all_ships = scan_id_range(fetch, lo, hi)
+        spids, sships = scan_id_range(fetch, lo, hi)
+        # MERGE with the committed corpus. This mode started life as a smoke
+        # test, and building the snapshot from the range alone meant
+        # `--ids 1:20 --out site/data/snapshot.json` replaced the published
+        # snapshot with 20 ships.
+        all_ships = merge_ships(baseline, sships)
+        pids = {s.get("pid") for s in all_ships}
         meta = {}
+        fetch.log(f"range {lo}..{hi}: {len(spids)} projects / {len(sships)} ships; "
+                  f"merged corpus {len(all_ships)} ships")
     elif args.full_scan:
         # Complete ID-space sweep: probe EVERY project ID from 1 (or the
         # previous scan frontier) to the live frontier. 404s are cheap

@@ -139,6 +139,9 @@ details.card > summary:hover { color: var(--accent); }
 .funnel .seg-warn { background: var(--warn); }
 .funnel .seg-bad { background: var(--danger); }
 .funnel .seg-wait { background: var(--accent); }
+/* stages after approval: distinct from the first-pass queue */
+.funnel .seg-2nd { background: #7c5cff; }
+.funnel .seg-fraud { background: #ff8a3d; }
 .funnel .seg-idle { background: var(--card2); }
 .funnel-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.8rem; color: var(--muted); margin-top: 8px; }
 .funnel-legend b { color: var(--text); }

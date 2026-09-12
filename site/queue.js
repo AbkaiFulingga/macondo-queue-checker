@@ -27,7 +27,7 @@
 
     $("queue-table").innerHTML = `<p class="muted small">${ships.length} ships ·
       data as of ${esc((snap.generated_at || "").replace("T", " ").replace("Z", " UTC"))}</p>
-      <table><thead><tr><th>#</th><th>Project</th><th>Owner</th><th>Lvl</th><th>Type</th><th>Hours</th><th>Submitted</th><th>Waiting</th></tr></thead>
+      <table><thead><tr><th>#</th><th>Project</th><th>Owner</th><th>Lvl</th><th>Type</th><th>Hours</th><th>Submitted (UTC)</th><th>Waiting</th></tr></thead>
       <tbody>` +
       ships.map(s => {
         const age = ageDays(s.created_at);

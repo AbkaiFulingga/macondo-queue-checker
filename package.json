@@ -1,0 +1,13 @@
+{
+  "name": "macondo-queue-checker",
+  "private": true,
+  "description": "Static site + nightly scraper for the Macondo review-queue tracker",
+  "scripts": {
+    "test": "python3 scraper/test_stats.py && node site/test_dom.mjs",
+    "test:dom": "node site/test_dom.mjs",
+    "serve": "python3 -m http.server 8137 --directory site"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1"
+  }
+}

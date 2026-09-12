@@ -299,6 +299,90 @@ def test_empty_inputs():
     assert stats.pipeline_counts([])["under_review"] == 0
 
 
+# ------------------------------------------------------- credited hours
+
+
+def test_ship_hours_precedence():
+    """The hours a ship was judged on: reviewer override, else its own
+    Hackatime hours, else (last resort) the project-level total."""
+    assert stats.ship_hours({"override_hours": 120, "hackatime_hours": 40}) == 120
+    assert stats.ship_hours({"override_hours": 0, "hackatime_hours": 40}) == 40
+    assert stats.ship_hours({"override_hours": None, "hackatime_hours": 40}) == 40
+    assert stats.ship_hours({"hackatime_hours": None, "hours": 55}) == 55
+    assert stats.ship_hours({}) is None
+
+
+def test_by_hours_uses_credited_hours():
+    """Regression: the crosstab read the project-level `hours` field, which is
+    only enriched onto waiting ships, so it binned ~76 of 2,680 decided ships.
+    Ship-level credited hours exist on nearly all of them."""
+    now = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    decided = []
+    for i in range(1, 7):
+        s = ship(i, 0, 10 + i, status="shipped", pid=i)
+        s["hours"] = None                       # no project-level total
+        s["hackatime_hours"] = 300.0            # judged at 300h
+        decided.append(s)
+    for i in range(10, 16):
+        s = ship(i, 0, 10 + i, status="rejected", pid=i)
+        s["hours"] = None
+        s["hackatime_hours"] = 300.0
+        decided.append(s)
+    o = stats.outcome_stats(decided)
+    assert o["by_hours"]["100h+"]["n"] == 12, o["by_hours"]
+    approx(o["by_hours"]["100h+"]["approval"], 6 / 12, 0.001)
+    assert "<10h" not in o["by_hours"]     # nothing landed in the wrong bucket
+    assert o["n_decided"] == 12
+    # ...and the snapshot still builds with no project hours present
+    snap = stats.build_snapshot(decided, now=now, cutoff_date=None)
+    assert snap["outcomes"]["by_hours"]["100h+"]["n"] == 12
+
+
+def test_waiting_count_equals_pipeline_stages():
+    """"In queue" must mean the same thing on the stat card and in the funnel:
+    first-pass queue + second pass + fraud check. A second-pass ship used to be
+    counted as waiting but not shown in any funnel segment."""
+    now = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    ships = [
+        ship(1, 0, status="under_review", pid=1),
+        ship(2, 0, status="under_review", pid=2),
+        ship(3, 0, status="pending_second_pass", pid=3),
+        ship(4, 0, status="pending_fraud_review", pid=4),
+        ship(5, 0, 10, status="shipped", pid=5),
+    ]
+    snap = stats.build_snapshot(ships, now=now, cutoff_date=None)
+    p = snap["pipeline"]
+    assert p["under_review"] == 2 and p["second_pass"] == 1 and p["fraud_review"] == 1
+    assert snap["queue"]["count"] == 4, snap["queue"]["count"]
+    assert snap["queue"]["count"] == p["under_review"] + p["second_pass"] + p["fraud_review"]
+    # the per-type bundle carries the same invariant
+    for bundle in snap["by_type"].values():
+        bp = bundle["pipeline"]
+        assert bundle["queue_count"] == bp["under_review"] + bp["second_pass"] + bp["fraud_review"]
+    # every stage segment sums to the total ships
+    assert p["under_review"] + p["second_pass"] + p["fraud_review"] + p["shipped"] \
+        + p["needs_changes"] + p["rejected"] == 5
+
+
+def test_merge_ships_preserves_baseline():
+    """--ids used to build the snapshot from the scanned range alone, so it
+    replaced the published corpus. The merge keeps baseline-only ships."""
+    import scrape
+
+    baseline = [
+        {"id": 1, "pid": 10, "status": "shipped", "name": "old", "type": "software"},
+        {"id": 2, "pid": 11, "status": "under_review", "name": "untouched"},
+    ]
+    fresh = [{"id": 1, "pid": 10, "status": "rejected", "name": None, "type": None}]
+    out = scrape.merge_ships(baseline, fresh)
+    by_id = {s["id"]: s for s in out}
+    assert set(by_id) == {1, 2}                       # baseline-only ship kept
+    assert by_id[1]["status"] == "rejected"           # fresh status wins
+    assert by_id[1]["name"] == "old"                  # baseline metadata fills in
+    assert by_id[1]["type"] == "software"
+    assert scrape.merge_ships([], baseline) == baseline
+
+
 # ------------------------------------------------------- submission cutoff
 
 

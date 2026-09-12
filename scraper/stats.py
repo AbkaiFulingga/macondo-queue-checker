@@ -20,15 +20,15 @@ DECIDED_STATUSES = {"shipped", "shipped_missing_airtable", "rejected", "needs_ch
 # Population cutoff: count projects whose ORIGINAL submission landed on or
 # before this date, interpreted in a US timezone (see apply_project_cutoff).
 DEFAULT_CUTOFF_DATE = "2026-08-31"
-DEFAULT_CUTOFF_TZ = "America/New_York"
+DEFAULT_CUTOFF_TZ = "UTC"
 # friendlier labels for the zones someone is likely to pick
 TZ_LABELS = {
+    "UTC": "UTC+0",
     "America/New_York": "US Eastern",
     "America/Chicago": "US Central",
     "America/Denver": "US Mountain",
     "America/Los_Angeles": "US Pacific",
     "Pacific/Honolulu": "US Hawaii",
-    "UTC": "UTC",
 }
 CUTOFF_RULE = (
     "Projects whose original submission was on or before the cutoff date are "
@@ -374,6 +374,23 @@ def pipeline_counts(all_ships):
 # --------------------------------------------------------------- outcomes
 
 
+def ship_hours(ship):
+    """Hours credited to a ship, as recorded at review time.
+
+    A reviewer override wins when present; otherwise the ship's own Hackatime
+    hours. This is the review-time figure, so a decided ship keeps the hours it
+    was judged on instead of the project's later, larger total. Falls back to
+    the project-level `hours` only when the ship record has neither.
+    """
+    override = ship.get("override_hours") or 0
+    if override > 0:
+        return override
+    h = ship.get("hackatime_hours")
+    if h is not None:
+        return h
+    return ship.get("hours")
+
+
 def _hours_bucket(h):
     if h is None:
         return "unknown"
@@ -411,10 +428,12 @@ def outcome_stats(decided_ships):
             a = sum(1 for s in cell if s.get("status") in ("shipped", "shipped_missing_airtable"))
             by_level[lvl] = {"n": len(cell), "approval": a / len(cell)}
     out["by_level"] = by_level
-    # by hours bucket
+    # by hours bucket -- uses the hours each ship was actually judged on, so
+    # this cell has ~2.4k samples instead of the ~80 that the project-level
+    # total (which is only enriched onto waiting ships) could give
     by_hours = {}
     for bucket in ("<10h", "10-50h", "50-100h", "100h+"):
-        cell = [s for s in ships if _hours_bucket(s.get("hours")) == bucket]
+        cell = [s for s in ships if _hours_bucket(ship_hours(s)) == bucket]
         if len(cell) >= 5:
             a = sum(1 for s in cell if s.get("status") in ("shipped", "shipped_missing_airtable"))
             by_hours[bucket] = {"n": len(cell), "approval": a / len(cell)}
@@ -675,12 +694,16 @@ def records(decided_ships):
 
 
 def similar_ships(mine, decided_ships, limit=5):
-    """Recent decided ships with closest level+hours, for the comparison panel."""
-    my_h = mine.get("hours") or 0
+    """Recent decided ships with closest level+hours, for the comparison panel.
+
+    `mine` is a waiting ship (hours = its current project total); candidates
+    carry the hours they were judged on, so the comparison is like-for-like.
+    """
+    my_h = ship_hours(mine) or mine.get("hours") or 0
     my_l = str(mine.get("level") or "")
 
     def score(s):
-        h = s.get("hours") or 0
+        h = ship_hours(s) or 0
         dh = abs(h - my_h) / max(my_h, 1.0)
         dl = 0.0 if str(s.get("level")) == my_l else 0.5
         return dh + dl
@@ -691,7 +714,7 @@ def similar_ships(mine, decided_ships, limit=5):
     for s in cands[:limit]:
         out.append({
             "pid": s.get("pid"), "name": s.get("name"), "level": s.get("level"),
-            "hours": s.get("hours"), "status": s.get("status"),
+            "hours": ship_hours(s), "status": s.get("status"),
             "waited_d": round(latency_days(s), 1),
         })
     return out
@@ -705,12 +728,16 @@ def _type_stats(all_ships, now, gate_closed):
     decided = [s for s in all_ships if is_decided(s)]
     waiting = [s for s in all_ships if is_waiting(s)]
     q = queue_stats(waiting, now=now)
+    pipe = pipeline_counts(all_ships)
+    # keep "in queue" meaning the same thing as the global figure
+    assert q["count"] == pipe["under_review"] + pipe["second_pass"] + pipe["fraud_review"], \
+        (q["count"], pipe)
     return {
         "queue_count": q["count"],
         "decided_count": len(decided),
         # exact per-type stage counts, so the funnel/legend follow the toggle
         # instead of always reporting the global totals
-        "pipeline": pipeline_counts(all_ships),
+        "pipeline": pipe,
         "series": {
             "queue_depth": depth_history(all_ships, now=now),
             "decisions_daily": decisions_daily(decided, now=now),
@@ -751,17 +778,24 @@ def build_snapshot(all_ships, now=None, gate_closed=True,
     ranked = sorted(waiting, key=lambda s: parse_ts(s.get("created_at")) or 0)
     queue_ships = []
     for i, s in enumerate(ranked):
+        hours = ship_hours(s)
         queue_ships.append({
             "id": s.get("id"), "pid": s.get("pid"), "name": s.get("name"),
             "owner": s.get("owner"), "level": s.get("level"),
-            "type": s.get("type"), "hours": s.get("hours"),
+            "type": s.get("type"), "hours": hours,
             "mult": s.get("mult"),
             "created_at": s.get("created_at"), "rank_by_age": i + 1,
         })
+    # "in queue" must mean one thing everywhere: every ship waiting on a first
+    # decision, a second-pass check, or a fraud verdict. queue.count and the
+    # funnel's stages are asserted equal in the tests.
+    pipe = pipeline_counts(all_ships)
+    waiting_total = (pipe["under_review"] + pipe["second_pass"] + pipe["fraud_review"])
+    assert q["count"] == waiting_total, (q["count"], waiting_total)
     snap = {
         "generated_at": now_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "submission_cutoff": cutoff_info,
-        "pipeline": pipeline_counts(all_ships),
+        "pipeline": pipe,
         "queue": {
             "count": q["count"], "oldest_days": q["oldest_days"],
             "front_date": q["front_date"],

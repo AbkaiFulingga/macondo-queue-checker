@@ -26,10 +26,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  scrape:
-    if: github.event_name != 'push'
+  # Tests run on EVERY event, including a push that skips the scrape -- a UI
+  # change must not be able to deploy on a red test.
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 200
     steps:
       - uses: actions/checkout@v4
 
@@ -40,17 +40,40 @@ jobs:
       - name: Run stats tests
         run: python3 scraper/test_stats.py
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install test dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Run frontend tests
+        run: node site/test_dom.mjs
+
+  scrape:
+    needs: test
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Scrape and build snapshot
         env:
           INPUT_MODE: ${{ github.event.inputs.mode }}
           EVENT_NAME: ${{ github.event_name }}
           # Population rule: count projects whose ORIGINAL submission was on or
-          # before this date (US Eastern), keeping their later resubmissions and
-          # second-pass ships; exclude projects first submitted after it. The
-          # scraper's corpus stays complete either way -- the cutoff only shapes
-          # the published snapshot, so it can be re-cut without re-scraping.
+          # before this date in the given timezone, keeping their later
+          # resubmissions and second-pass ships; exclude projects first submitted
+          # after it. The scraper's corpus stays complete either way -- the
+          # cutoff only shapes the published snapshot, so it can be re-cut
+          # without re-scraping. All times the site displays are UTC.
           CUTOFF: "2026-08-31"
-          CUTOFF_TZ: "America/New_York"
+          CUTOFF_TZ: "UTC"
         run: |
           # Scheduled Sunday 03:00 + manual "full" => full baseline; else nightly delta
           if [ "$EVENT_NAME" = "schedule" ] && [ "$(date -u +%u)" = "7" ] || [ "$INPUT_MODE" = "full" ]; then
@@ -101,10 +124,11 @@ jobs:
           fi
 
   deploy:
-    needs: scrape
+    needs: [test, scrape]
     # a push that only touches site/** skips the scrape job and deploys the
-    # committed data straight away, so UI fixes ship in ~1 minute
-    if: always() && (needs.scrape.result == 'success' || needs.scrape.result == 'skipped')
+    # committed data straight away, so UI fixes ship in ~1 minute -- but only
+    # once the tests are green
+    if: always() && needs.test.result == 'success' && (needs.scrape.result == 'success' || needs.scrape.result == 'skipped')
     runs-on: ubuntu-latest
     environment:
       name: github-pages

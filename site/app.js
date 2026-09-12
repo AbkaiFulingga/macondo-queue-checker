@@ -8,6 +8,14 @@
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
     c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const fmtDays = (d) => d == null ? "—" : (d >= 10 ? Math.round(d) : Math.round(d * 10) / 10) + "d";
+  // Everything the site shows is UTC, so format explicitly instead of letting
+  // toLocale* silently apply the visitor's timezone and shift the date.
+  const fmtUTC = (iso, withTime) => {
+    const d = new Date(iso);
+    if (isNaN(d)) return "—";
+    const date = d.toISOString().slice(0, 10);
+    return withTime ? `${date} ${d.toISOString().slice(11, 16)} UTC` : `${date} (UTC)`;
+  };
   const fmtH = (h) => h == null ? "—" : (Math.round(h * 10) / 10) + "h";
 
   // ------------------------------------------------------------ snapshot
@@ -254,7 +262,7 @@
     const kv = [
       ["Project", `<a href="https://macondo.hackclub.com/projects/${proj.id}">${esc(proj.name)} ↗</a>`],
       ["Type / level", `${esc(proj.type)} · Level ${esc(proj.level)} (${esc(proj.fruit)})`],
-      ["Submitted", active.created_at ? new Date(active.created_at).toLocaleDateString() : "—"],
+      ["Submitted", active.created_at ? fmtUTC(active.created_at) : "—"],
       ["Waiting", est_days(active.created_at) + " days"],
       ["Hours logged", fmtH(proj.public_total_hours) + " (live — updates during review)"],
       ["Streak", proj.project_streak_days + " days"],
@@ -497,19 +505,25 @@
     $("bigpicture-cards").innerHTML = bp.map(x =>
       `<div class="bp-card${x.hot ? " hot" : ""}"><div class="v">${x.v}</div><div class="k">${x.k}<i class="tip" tabindex="0" data-tip="${esc(x.tip)}"></i></div>${x.sub ? `<div class="sub">${esc(x.sub)}</div>` : ""}</div>`).join("");
 
-    // funnel bar: every ship ever submitted, by current state
+    // funnel bar: every ship ever submitted, by current state. Second-pass and
+    // fraud-check ships are their own stages, so the segments always sum to the
+    // stated total and "In queue" matches the queue stat card above.
     if (totalShips) {
       const seg = (n, cls) => n ? `<div class="${cls}" style="flex:${n}" title="${n}"></div>` : "";
       $("funnel-bar").innerHTML =
         seg(pipe.shipped || 0, "seg-ok") + seg(pipe.needs_changes || 0, "seg-warn") +
-        seg(pipe.rejected || 0, "seg-bad") + seg(pipe.under_review || 0, "seg-wait");
+        seg(pipe.rejected || 0, "seg-bad") + seg(pipe.under_review || 0, "seg-wait") +
+        seg(pipe.second_pass || 0, "seg-2nd") + seg(pipe.fraud_review || 0, "seg-fraud");
       const pct = (n) => totalShips ? Math.round((n / totalShips) * 100) : 0;
+      const inQueue = (pipe.under_review || 0) + (pipe.second_pass || 0) + (pipe.fraud_review || 0);
       $("funnel-legend").innerHTML = `
         <span><i class="dot seg-ok"></i>Shipped: <b>${pipe.shipped || 0}</b> (${pct(pipe.shipped)}%)</span>
         <span><i class="dot seg-warn"></i>Needs changes: <b>${pipe.needs_changes || 0}</b> (${pct(pipe.needs_changes)}%)</span>
         <span><i class="dot seg-bad"></i>Rejected: <b>${pipe.rejected || 0}</b> (${pct(pipe.rejected)}%)</span>
-        <span><i class="dot seg-wait"></i>In queue: <b>${pipe.under_review || 0}</b> (${pct(pipe.under_review)}%)</span>
-        <span class="muted">— every ${typeLabel ? typeLabel + " " : ""}ship ever submitted (${totalShips.toLocaleString()} total)</span>`;
+        <span><i class="dot seg-wait"></i>In queue: <b>${inQueue}</b> (${pct(inQueue)}%)</span>` +
+        (pipe.second_pass ? `<span><i class="dot seg-2nd"></i>Second pass: <b>${pipe.second_pass}</b></span>` : "") +
+        (pipe.fraud_review ? `<span><i class="dot seg-fraud"></i>Fraud check: <b>${pipe.fraud_review}</b></span>` : "") +
+        `<span class="muted">— every ${typeLabel ? typeLabel + " " : ""}ship ever submitted (${totalShips.toLocaleString()} total)</span>`;
       // percentages come from the data, not from a hand-written claim: among
       // decided ships these three sum to 100% (a change-request is reworkable,
       // a rejection is terminal)
@@ -601,7 +615,7 @@
       ${medH != null && medH < 15 ? '<div class="interp"><span class="lead">Reading</span>Most waiting ships have few hours — reviewers can clear many of them in a single active day. Big-hour ships (like 100h+) are rarer and may get more careful, slower looks.</div>' : ""}`;
 
     // recent decisions
-    $("recent-body").innerHTML = "<table><thead><tr><th>Project</th><th>Status</th><th>Waited</th><th>Decided</th></tr></thead><tbody>" +
+    $("recent-body").innerHTML = "<table><thead><tr><th>Project</th><th>Status</th><th>Waited</th><th>Decided (UTC)</th></tr></thead><tbody>" +
       (s.recent_decisions || []).slice(0, 20).map(d => {
         const cls = d.status === "shipped" ? "ok" : d.status === "rejected" ? "bad" : "wait";
         return `<tr><td><a href="https://macondo.hackclub.com/projects/${d.pid}">${esc(d.name || "#" + d.pid)}</a></td>

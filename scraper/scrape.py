@@ -549,7 +549,14 @@ def run(args):
     fetch.log(f"meta cache: {before} -> {len(meta_cache)} projects")
 
     # ---- snapshot
-    snap = stats.build_snapshot(all_ships, gate_closed=args.gate_closed)
+    snap = stats.build_snapshot(all_ships, gate_closed=args.gate_closed,
+                                cutoff_date=args.cutoff, cutoff_tz=args.cutoff_tz)
+    if snap.get("submission_cutoff"):
+        c = snap["submission_cutoff"]
+        fetch.log(f"cutoff {c['date']} {c['tz']}: kept {c['projects_kept']} projects "
+                  f"({c['ships_kept']} ships), excluded {c['projects_excluded']} projects "
+                  f"({c['ships_excluded']} ships), "
+                  f"{c['late_ships_of_kept_projects']} late ships of kept projects")
     snap["meta"] = {
         "n_projects": len(pids),
         "n_ships": len(all_ships),
@@ -608,7 +615,8 @@ def run(args):
     return snap
 
 
-def run_offline(out_path, gate_closed=True):
+def run_offline(out_path, gate_closed=True, cutoff_date=stats.DEFAULT_CUTOFF_DATE,
+                cutoff_tz=stats.DEFAULT_CUTOFF_TZ):
     """Build snapshot from the seed corpus (no network)."""
     seed = os.path.join(HERE, "seed_ships.ndjson")
     ships = []
@@ -616,7 +624,8 @@ def run_offline(out_path, gate_closed=True):
         for line in f:
             if line.strip():
                 ships.append(json.loads(line))
-    snap = stats.build_snapshot(ships, gate_closed=gate_closed)
+    snap = stats.build_snapshot(ships, gate_closed=gate_closed,
+                                cutoff_date=cutoff_date, cutoff_tz=cutoff_tz)
     snap["meta"] = {"n_projects": len({s.get("pid") for s in ships}),
                     "n_ships": len(ships), "offline_seed": True}
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
@@ -645,11 +654,21 @@ def main():
                     help="submission gate is closed: no new ships arriving; drain assumes arrivals=0 (default on)")
     ap.add_argument("--gate-open", dest="gate_closed", action="store_false",
                     help="override: submissions still possible")
+    ap.add_argument("--cutoff", default=stats.DEFAULT_CUTOFF_DATE,
+                    help=f"only count projects first submitted on/before this date, "
+                         f"US time; their later resubmissions and second-pass reviews "
+                         f"still count (default {stats.DEFAULT_CUTOFF_DATE})")
+    ap.add_argument("--cutoff-tz", default=stats.DEFAULT_CUTOFF_TZ,
+                    help=f"timezone the cutoff date is evaluated in (default {stats.DEFAULT_CUTOFF_TZ})")
+    ap.add_argument("--no-cutoff", dest="cutoff", action="store_const", const=None,
+                    help="publish the raw corpus with no submission cutoff applied")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
     if args.offline:
-        run_offline(args.out or os.path.join(HERE, "..", "site", "data", "snapshot.json"))
+        run_offline(args.out or os.path.join(HERE, "..", "site", "data", "snapshot.json"),
+                    gate_closed=args.gate_closed, cutoff_date=args.cutoff,
+                    cutoff_tz=args.cutoff_tz)
         return
 
     snap = run(args)

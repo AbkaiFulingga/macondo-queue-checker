@@ -38,6 +38,11 @@ def main():
     ap.add_argument("--workers", type=int, default=1)
     ap.add_argument("--gate-closed", action="store_true", default=True)
     ap.add_argument("--gate-open", dest="gate_closed", action="store_false")
+    ap.add_argument("--cutoff", default=stats.DEFAULT_CUTOFF_DATE,
+                    help=f"submission cutoff date, US time (default {stats.DEFAULT_CUTOFF_DATE})")
+    ap.add_argument("--cutoff-tz", default=stats.DEFAULT_CUTOFF_TZ)
+    ap.add_argument("--no-cutoff", dest="cutoff", action="store_const", const=None,
+                    help="rebuild with no submission cutoff applied")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
@@ -80,7 +85,8 @@ def main():
         for s in ships:
             f.write(json.dumps(s, separators=(",", ":")) + "\n")
 
-    snap = stats.build_snapshot(ships, gate_closed=args.gate_closed)
+    snap = stats.build_snapshot(ships, gate_closed=args.gate_closed,
+                                cutoff_date=args.cutoff, cutoff_tz=args.cutoff_tz)
     meta = {"n_projects": len(pids), "n_ships": len(ships),
             "fetch_stats": {"ok": fetch.n_ok, "err": fetch.n_err},
             "elapsed_s": round(time.time() - t0, 1),

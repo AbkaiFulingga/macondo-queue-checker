@@ -144,6 +144,17 @@
       .forEach(id => $(id).classList.add("hidden"));
   }
 
+  // A project whose FIRST ship arrived after the cutoff is outside the window
+  // the dashboard measures, so say so instead of leaving the visitor to wonder
+  // why their project never appears in the queue.
+  function cutoffNote(ships) {
+    const c = SNAP && SNAP.submission_cutoff;
+    if (!c || !c.cutoff_utc) return "";
+    const ts = (ships || []).map(s => Date.parse(s.created_at)).filter(t => !isNaN(t));
+    if (!ts.length || Math.min(...ts) <= Date.parse(c.cutoff_utc)) return "";
+    return `<p class="muted small">First submitted after the ${esc(c.date)} cutoff — so this project is outside the window the dashboard's queue and estimates cover. Its own status below is still live.</p>`;
+  }
+
   function renderBanner(proj, active, est, ships) {
     const b = $("result-banner");
     const liveNote = PROXY ? '<span class="pill info">live</span>' : '<span class="pill wait">snapshot</span>';
@@ -171,7 +182,8 @@
 
     b.innerHTML = `<h2>${statusPill} ${esc(proj.name)} ${liveNote}</h2>
       <p class="eta-sub">${headline} · <a href="https://macondo.hackclub.com/projects/${proj.id}">view on Macondo ↗</a></p>
-      ${decisionHtml}`;
+      ${decisionHtml}
+      ${cutoffNote(ships)}`;
   }
 
   const STEP_DEFS = [
@@ -434,6 +446,21 @@
     }
     $("dashboard-tldr").innerHTML =
       `Right now: <strong>${b.queue_count != null ? b.queue_count : "?"}</strong>${typeLabel ? " " + typeLabel : ""} ships waiting · reviewers decide <strong>${drain.decisions_per_day_14d ?? "?"}</strong>/day · ${trend}.${clearsTxt}`;
+
+    // population rule, stated up front: the dashboard freezes the set of
+    // projects at the cutoff so the backlog is a fixed, measurable population
+    const cutEl = $("cutoff-note");
+    if (cutEl) {
+      const cut = s.submission_cutoff;
+      if (cut) {
+        const late = cut.late_ships_of_kept_projects || 0;
+        cutEl.innerHTML = `Counting <strong>projects first submitted on or before ${esc(cut.date)}</strong> (${esc(cut.tz_label || cut.tz)}) — ${cut.projects_kept.toLocaleString()} projects, ${cut.ships_kept.toLocaleString()} ships. ` +
+          `Their later resubmissions and second-pass reviews still count (${late} ship${late === 1 ? "" : "s"} arrived after the cutoff). ` +
+          `${cut.projects_excluded} project${cut.projects_excluded === 1 ? "" : "s"} first submitted after the cutoff are left out.`;
+      } else {
+        cutEl.innerHTML = "";
+      }
+    }
 
     if (window.renderCharts) window.renderCharts({ series: b.series, drain: b.drain });
 

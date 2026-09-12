@@ -299,6 +299,74 @@ def test_empty_inputs():
     assert stats.pipeline_counts([])["under_review"] == 0
 
 
+# ------------------------------------------------------- submission cutoff
+
+
+def test_cutoff_is_per_project_not_per_ship():
+    """The rule: keep a project if its ORIGINAL submission was on/before the
+    cutoff, and keep ALL of its ships -- resubmissions and second-pass reviews
+    that landed afterwards are the same project still moving through review."""
+    cutoff = stats.cutoff_epoch("2026-08-31", "America/New_York")  # = 2026-09-01 04:00Z
+    early = ship(1, 240, status="needs_changes", pid=1)     # 2026-08-29
+    assert stats.parse_ts(early["created_at"]) <= cutoff
+
+    ships = [
+        early,                                              # original, before
+        ship(2, 245, status="under_review", pid=1),         # resubmit, 2026-09-03
+        ship(3, 248, status="pending_second_pass", pid=1),  # 2nd pass, 2026-09-06
+        ship(4, 245, status="under_review", pid=2),         # late project
+        ship(5, 250, status="rejected", pid=3),             # late project
+    ]
+    kept = stats.apply_project_cutoff(ships, cutoff)
+    assert sorted(s["id"] for s in kept) == [1, 2, 3], sorted(s["id"] for s in kept)
+
+    info = stats.cutoff_summary(ships, kept, cutoff, "2026-08-31", "America/New_York")
+    assert info["projects_kept"] == 1 and info["projects_excluded"] == 2
+    assert info["ships_kept"] == 3 and info["ships_excluded"] == 2
+    assert info["late_ships_of_kept_projects"] == 2   # the resubmit + second pass
+    assert info["cutoff_utc"] == "2026-09-01 04:00:00Z"
+
+
+def test_cutoff_boundary_and_timezone():
+    # a ship at the very end of 31 Aug Eastern (= 2026-09-01 03:59Z) is kept;
+    # one minute into 1 Sep Eastern is excluded
+    ships = [
+        ship(1, 0, status="under_review", pid=1),
+        ship(2, 0, status="under_review", pid=2),
+    ]
+    ships[0]["created_at"] = "2026-09-01T03:59:00Z"
+    ships[1]["created_at"] = "2026-09-01T04:01:00Z"
+    et = stats.cutoff_epoch("2026-08-31", "America/New_York")
+    assert [s["id"] for s in stats.apply_project_cutoff(ships, et)] == [1]
+    # the same instants judged by Pacific time: end of 31 Aug PT is 07:00Z,
+    # so both are before the cutoff
+    pt = stats.cutoff_epoch("2026-08-31", "America/Los_Angeles")
+    assert [s["id"] for s in stats.apply_project_cutoff(ships, pt)] == [1, 2]
+
+
+def test_cutoff_disabled_and_keeps_undated_projects():
+    ships = [ship(1, 240, status="under_review", pid=1),
+             ship(2, 245, status="under_review", pid=2)]
+    assert len(stats.apply_project_cutoff(ships, None)) == 2      # no cutoff
+    # a project with no parseable date is kept rather than silently dropped
+    undated = dict(ships[1])
+    undated["created_at"] = None
+    assert stats.apply_project_cutoff([undated], 1.0) == [undated]
+
+
+def test_snapshot_applies_cutoff():
+    now = datetime(2026, 9, 12, tzinfo=timezone.utc)
+    ships = [
+        ship(1, 240, status="under_review", pid=1),      # ~29 Aug, kept
+        ship(2, 245, status="under_review", pid=2),      # ~3 Sep, excluded
+    ]
+    snap = stats.build_snapshot(ships, now=now, cutoff_date="2026-08-31")
+    assert snap["submission_cutoff"]["projects_kept"] == 1
+    assert snap["submission_cutoff"]["projects_excluded"] == 1
+    assert snap["queue"]["count"] == 1
+    assert stats.build_snapshot(ships, now=now, cutoff_date=None)["queue"]["count"] == 2
+
+
 # ------------------------------------------------- type-bundle / enrichment
 
 

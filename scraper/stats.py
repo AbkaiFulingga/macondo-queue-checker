@@ -17,6 +17,83 @@ GOLD_RATES = {"1": 40, "2": 45, "3": 50, "4": 60}
 WAITING_STATUSES = {"under_review", "pending_second_pass", "pending_fraud_review"}
 DECIDED_STATUSES = {"shipped", "shipped_missing_airtable", "rejected", "needs_changes"}
 
+# Population cutoff: count projects whose ORIGINAL submission landed on or
+# before this date, interpreted in a US timezone (see apply_project_cutoff).
+DEFAULT_CUTOFF_DATE = "2026-08-31"
+DEFAULT_CUTOFF_TZ = "America/New_York"
+# friendlier labels for the zones someone is likely to pick
+TZ_LABELS = {
+    "America/New_York": "US Eastern",
+    "America/Chicago": "US Central",
+    "America/Denver": "US Mountain",
+    "America/Los_Angeles": "US Pacific",
+    "Pacific/Honolulu": "US Hawaii",
+    "UTC": "UTC",
+}
+CUTOFF_RULE = (
+    "Projects whose original submission was on or before the cutoff date are "
+    "counted in full, including resubmissions and second-pass reviews submitted "
+    "after it. Projects first submitted after the cutoff are excluded."
+)
+
+
+def cutoff_epoch(date_str, tz_name=DEFAULT_CUTOFF_TZ):
+    """End of {date_str} in {tz_name}, as a UTC epoch. None if date_str is falsy."""
+    if not date_str:
+        return None
+    from zoneinfo import ZoneInfo  # 3.9+; needs the system tz database
+    y, m, d = (int(x) for x in date_str.split("-"))
+    local_end = datetime(y, m, d, tzinfo=ZoneInfo(tz_name)) + timedelta(days=1)
+    return local_end.astimezone(timezone.utc).timestamp()
+
+
+def apply_project_cutoff(ships, cutoff):
+    """Keep the ships of every project whose earliest ship predates `cutoff`.
+
+    The decision is per PROJECT, not per ship, and deliberately so: a project
+    accepted before the cutoff can still resubmit or sit in second-pass review
+    afterwards, and those later ships are the same project moving through the
+    pipeline. Judging ship-by-ship would silently drop them. A project with no
+    parseable date is kept -- it cannot be shown to be late.
+    """
+    if cutoff is None:
+        return list(ships)
+    by_pid = {}
+    for s in ships:
+        by_pid.setdefault(s.get("pid"), []).append(s)
+    keep = set()
+    for pid, group in by_pid.items():
+        dates = [parse_ts(s.get("created_at")) for s in group]
+        dates = [d for d in dates if d is not None]
+        if not dates or min(dates) <= cutoff:
+            keep.add(pid)
+    return [s for s in ships if s.get("pid") in keep]
+
+
+def cutoff_summary(all_ships, kept, cutoff, date_str, tz_name):
+    """Describe what the cutoff did, for the snapshot and the site copy."""
+    if cutoff is None:
+        return None
+    kept_pids = {s.get("pid") for s in kept}
+    all_pids = {s.get("pid") for s in all_ships}
+    dropped = all_pids - kept_pids
+    # ships of kept projects that arrived after the cutoff -- the resubmissions
+    # and second-pass reviews the rule explicitly still counts
+    late_kept = [s for s in kept
+                 if (parse_ts(s.get("created_at")) or 0) > cutoff]
+    return {
+        "date": date_str,
+        "tz": tz_name,
+        "tz_label": TZ_LABELS.get(tz_name, tz_name),
+        "cutoff_utc": datetime.fromtimestamp(cutoff, timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ"),
+        "rule": CUTOFF_RULE,
+        "projects_kept": len(kept_pids),
+        "projects_excluded": len(dropped),
+        "ships_kept": len(kept),
+        "ships_excluded": len(all_ships) - len(kept),
+        "late_ships_of_kept_projects": len(late_kept),
+    }
+
 
 # ---------------------------------------------------------------- parsing
 
@@ -652,10 +729,20 @@ def _type_stats(all_ships, now, gate_closed):
     }
 
 
-def build_snapshot(all_ships, now=None, gate_closed=True):
-    """Assemble the full snapshot consumed by the site."""
+def build_snapshot(all_ships, now=None, gate_closed=True,
+                   cutoff_date=DEFAULT_CUTOFF_DATE, cutoff_tz=DEFAULT_CUTOFF_TZ):
+    """Assemble the full snapshot consumed by the site.
+
+    `cutoff_date`+`cutoff_tz` restrict the population to projects originally
+    submitted by the end of that date (US time). Pass cutoff_date=None to
+    publish the raw corpus instead.
+    """
     now_dt = now or datetime.now(timezone.utc)
     now = now_dt.timestamp()
+    cutoff = cutoff_epoch(cutoff_date, cutoff_tz)
+    kept = apply_project_cutoff(all_ships, cutoff)
+    cutoff_info = cutoff_summary(all_ships, kept, cutoff, cutoff_date, cutoff_tz)
+    all_ships = kept
     decided = [s for s in all_ships if is_decided(s)]
     waiting = [s for s in all_ships if is_waiting(s)]
     lat = latency_stats(decided)
@@ -673,6 +760,7 @@ def build_snapshot(all_ships, now=None, gate_closed=True):
         })
     snap = {
         "generated_at": now_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "submission_cutoff": cutoff_info,
         "pipeline": pipeline_counts(all_ships),
         "queue": {
             "count": q["count"], "oldest_days": q["oldest_days"],

@@ -89,6 +89,8 @@
       <button data-t="hardware">Hardware</button>
     </div>
 
+    <p class="muted small" id="cutoff-note"></p>
+
     <!-- ================= BIG PICTURE ================= -->
     <section class="card">
       <h2>The big picture — every project on Macondo
@@ -144,9 +146,9 @@
         </div>
         <div class="card" style="margin-top:14px">
           <h2>Arrivals per week
-            <i class="tip" tabindex="0" data-tip="New ships submitted each week. Compare against decisions/day: if arrivals outpace decisions, the queue grows and every ETA gets longer."></i>
+            <i class="tip" tabindex="0" data-tip="New ships submitted each week by the counted projects. The tall final bars are the last-week rush before the cutoff; after that they are only resubmissions and second-pass ships of projects already counted."></i>
           </h2>
-          <p class="readhow">How to read: <b>compare with the decisions chart</b>. Arrivals above decisions = growing backlog; below = shrinking.</p>
+          <p class="readhow">How to read: <b>the last tall bars are the pre-cutoff rush, not an ongoing flow</b>. Only projects first submitted on or before the cutoff are counted, so from the cutoff onward the only arrivals are resubmissions and second-pass ships of those projects.</p>
           <canvas id="chart-arrivals" height="140"></canvas>
         </div>
       </div>

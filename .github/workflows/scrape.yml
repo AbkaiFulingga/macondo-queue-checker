@@ -44,16 +44,26 @@ jobs:
         env:
           INPUT_MODE: ${{ github.event.inputs.mode }}
           EVENT_NAME: ${{ github.event_name }}
+          # Population rule: count projects whose ORIGINAL submission was on or
+          # before this date (US Eastern), keeping their later resubmissions and
+          # second-pass ships; exclude projects first submitted after it. The
+          # scraper's corpus stays complete either way -- the cutoff only shapes
+          # the published snapshot, so it can be re-cut without re-scraping.
+          CUTOFF: "2026-08-31"
+          CUTOFF_TZ: "America/New_York"
         run: |
           # Scheduled Sunday 03:00 + manual "full" => full baseline; else nightly delta
           if [ "$EVENT_NAME" = "schedule" ] && [ "$(date -u +%u)" = "7" ] || [ "$INPUT_MODE" = "full" ]; then
-            python3 scraper/scrape.py --out site/data/snapshot.json --workers 2
+            python3 scraper/scrape.py --out site/data/snapshot.json --workers 2 \
+              --cutoff "$CUTOFF" --cutoff-tz "$CUTOFF_TZ"
           else
             # first run has no corpus: fall back to full automatically
             if [ -f site/data/ships.ndjson ]; then
-              python3 scraper/scrape.py --nightly --out site/data/snapshot.json --workers 2
+              python3 scraper/scrape.py --nightly --out site/data/snapshot.json --workers 2 \
+                --cutoff "$CUTOFF" --cutoff-tz "$CUTOFF_TZ"
             else
-              python3 scraper/scrape.py --out site/data/snapshot.json --workers 2
+              python3 scraper/scrape.py --out site/data/snapshot.json --workers 2 \
+                --cutoff "$CUTOFF" --cutoff-tz "$CUTOFF_TZ"
             fi
           fi
 

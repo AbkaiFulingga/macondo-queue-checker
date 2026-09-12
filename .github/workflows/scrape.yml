@@ -134,7 +134,13 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # Check out the CURRENT main, not this run's triggering commit. A push run
+      # can sit in the concurrency queue while a scrape run commits fresh data
+      # and deploys; on the old behaviour the queued push run then deployed its
+      # own older tree and republished stale data over the fresh snapshot.
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

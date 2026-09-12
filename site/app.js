@@ -416,6 +416,40 @@
 
     if (window.renderCharts) window.renderCharts(s);
 
+    // ---- big picture: every project on Macondo, accounted for
+    const pipe = s.pipeline || {};
+    const totalShips = s.meta.n_ships || null;
+    const totalLive = (s.meta && s.meta.n_live_projects_total) || null;
+    const withShips = s.meta.n_projects || null;
+    const decidedShips = (pipe.shipped || 0) + (pipe.rejected || 0) + (pipe.needs_changes || 0);
+    const neverSubmitted = (totalLive != null && withShips != null) ? totalLive - withShips : null;
+    const distinctWaiting = new Set((q.ships || []).map(x => x.pid)).size || null;
+    const bp = [
+      { v: totalLive != null ? totalLive.toLocaleString() : "12,210", k: "projects on Macondo", tip: "Every live (non-deleted) project, from our complete scan of all 17,451 project IDs." },
+      { v: neverSubmitted != null ? neverSubmitted.toLocaleString() : "≈8,350", k: "never submitted for review", tip: "Projects that exist but have never shipped anything. Most projects never get submitted — this is normal and they cost the queue nothing." },
+      { v: withShips != null ? withShips.toLocaleString() : "3,860", k: "submitted at least once", tip: "Projects with at least one ship in their history." },
+      { v: distinctWaiting || q.count, k: "projects in queue right now", tip: "Distinct projects with a ship currently awaiting review. Highlighted — this is the live line.", hot: true },
+    ];
+    $("bigpicture-cards").innerHTML = bp.map(x =>
+      `<div class="bp-card${x.hot ? " hot" : ""}"><div class="v">${x.v}</div><div class="k">${x.k}<i class="tip" tabindex="0" data-tip="${esc(x.tip)}"></i></div></div>`).join("");
+
+    // funnel bar: all 4,064 ships by current state
+    if (totalShips) {
+      const seg = (n, cls) => n ? `<div class="${cls}" style="flex:${n}" title="${n}"></div>` : "";
+      $("funnel-bar").innerHTML =
+        seg(pipe.shipped || 0, "seg-ok") + seg(pipe.needs_changes || 0, "seg-warn") +
+        seg(pipe.rejected || 0, "seg-bad") + seg(pipe.under_review || 0, "seg-wait");
+      const pct = (n) => totalShips ? Math.round((n / totalShips) * 100) : 0;
+      $("funnel-legend").innerHTML = `
+        <span><i class="dot seg-ok"></i>Shipped: <b>${pipe.shipped || 0}</b> (${pct(pipe.shipped)}%)</span>
+        <span><i class="dot seg-warn"></i>Needs changes: <b>${pipe.needs_changes || 0}</b> (${pct(pipe.needs_changes)}%)</span>
+        <span><i class="dot seg-bad"></i>Rejected: <b>${pipe.rejected || 0}</b> (${pct(pipe.rejected)}%)</span>
+        <span><i class="dot seg-wait"></i>In queue: <b>${pipe.under_review || 0}</b> (${pct(pipe.under_review)}%)</span>
+        <span class="muted">— every ship ever submitted (${totalShips.toLocaleString()} total)</span>`;
+      $("bigpicture-interp").innerHTML =
+        `<span class="lead">Reading this</span>Of <strong>${totalShips.toLocaleString()}</strong> ships ever submitted across ${withShips ? withShips.toLocaleString() + " projects" : "all projects"}: <strong>${decidedShips.toLocaleString()}</strong> have been reviewed (that's ${(pipe.shipped || 0).toLocaleString()} approvals, ${(pipe.needs_changes || 0).toLocaleString()} change-requests, ${(pipe.rejected || 0).toLocaleString()} rejections), and <strong>${(pipe.under_review || 0).toLocaleString()}</strong> are waiting right now. Roughly 2 in 3 decided ships get approved at first pass — and change-requests aren't rejections, you revise and rejoin the queue.`;
+    }
+
     // drain verdict — the honest answer to "when will ALL reviews finish?"
     const drainEl = $("drain-body");
     if (drainEl) {
@@ -474,7 +508,6 @@
     hoursList.sort((a, b) => a - b);
     const medH = hoursList.length ? Math.round(hoursList[Math.floor(hoursList.length / 2)] * 10) / 10 : null;
     const bigShips = hoursList.filter(h => h >= 100).length;
-    const totalLive = (s.meta && s.meta.n_live_projects_total) || null;
     $("composition-body").innerHTML = `<ul class="clean">` +
       Object.keys(byLevel).sort().map(l => `<li>Level ${esc(l)}: ${byLevel[l]} waiting</li>`).join("") +
       `</ul><p class="muted small">${ships.length} ships · median ${medH}h logged · ${bigShips} with 100h+</p>

@@ -491,6 +491,16 @@ def run(args):
         # IDs probed vs 404s → how many live projects Macondo has in total
         snap["meta"]["n_ids_probed"] = frontier - args.from_id + 1
         snap["meta"]["n_live_projects_total"] = max(0, snap["meta"]["n_ids_probed"] - fetch.n_err)
+    else:
+        # carry full-scan coverage numbers forward (only full scans measure them)
+        try:
+            with open(out_path) as f:
+                prev_meta = json.load(f).get("meta", {})
+            for k in ("n_ids_probed", "n_deleted_or_unreachable", "n_live_projects_total"):
+                if k not in snap["meta"] and k in prev_meta:
+                    snap["meta"][k] = prev_meta[k]
+        except (OSError, json.JSONDecodeError, AttributeError):
+            pass
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:

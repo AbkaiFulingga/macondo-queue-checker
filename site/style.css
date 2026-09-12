@@ -117,6 +117,23 @@ details.card > summary::before { content: "▸ "; color: var(--accent); }
 details.card[open] > summary::before { content: "▾ "; }
 details.card > summary:hover { color: var(--accent); }
 
+/* ---- big picture ---- */
+.bigpicture { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.bp-card { background: var(--card2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.bp-card .v { font-size: 1.35rem; font-weight: 700; }
+.bp-card .k { color: var(--muted); font-size: 0.75rem; line-height: 1.35; margin-top: 2px; }
+.bp-card.hot { border-color: var(--accent); }
+.bp-card.hot .v { color: var(--accent); }
+.funnel { display: flex; height: 26px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); margin-bottom: 6px; }
+.funnel .seg-ok { background: var(--ok); }
+.funnel .seg-warn { background: var(--warn); }
+.funnel .seg-bad { background: var(--danger); }
+.funnel .seg-wait { background: var(--accent); }
+.funnel .seg-idle { background: var(--card2); }
+.funnel-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.8rem; color: var(--muted); margin-top: 8px; }
+.funnel-legend b { color: var(--text); }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
+
 /* ---- metric explanations ---- */
 .stat .sub { color: var(--muted); font-size: 0.72rem; margin-top: 2px; line-height: 1.35; }
 

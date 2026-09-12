@@ -1,7 +1,7 @@
 /** Main app: search handling, result card, dashboard. Static site, no build. */
 (function () {
   // The CORS proxy (see worker/DEPLOY.md). Leave as-is to use snapshot fallback.
-  const PROXY = ""; // e.g. "https://macondo-queue-proxy.yourname.workers.dev"
+  const PROXY = "https://macondo-queue-906.workers.dev"; // live per-visitor status
   let SNAP = null;
 
   const $ = (id) => document.getElementById(id);

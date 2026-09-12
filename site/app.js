@@ -309,7 +309,7 @@
     if (mult) {
       const g = window.eta.goldEstimate(h, proj.level, mult);
       headline = `${g.toLocaleString()} gold`;
-      sub = `if approved: ${fmtH(h)}h × ${rate}/hr (level ${esc(proj.level)}) × ${Math.round(mult * 100) / 100}× (streak multiplier)`;
+      sub = `if approved: ${fmtH(h)} × ${rate}/hr (level ${esc(proj.level)}) × ${Math.round(mult * 100) / 100}× (streak multiplier)`;
     } else {
       headline = `${base.toLocaleString()}+ gold`;
       sub = `base rate: ${fmtH(h)}h × ${rate}/hr (level ${esc(proj.level)}) — before your streak bonus`;

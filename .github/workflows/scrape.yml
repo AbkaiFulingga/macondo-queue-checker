@@ -67,7 +67,13 @@ jobs:
             echo "no changes"
           else
             git commit -m "nightly snapshot $(date -u +%Y-%m-%d)"
-            git push
+            # another push (manual or another run) may have landed meanwhile;
+            # rebase on top of it and retry once
+            if ! git push; then
+              git fetch origin main
+              git rebase origin/main
+              git push
+            fi
           fi
 
       - name: Configure Pages

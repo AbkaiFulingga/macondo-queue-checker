@@ -88,6 +88,8 @@ def main():
     try:
         with open(snap_path) as f:
             prev = json.load(f).get("meta", {})
+        if prev.get("coverage"):
+            meta["coverage"] = prev["coverage"]
         for k in ("n_ids_probed", "n_deleted_or_unreachable", "n_live_projects_total"):
             if prev.get(k) is not None:
                 meta[k] = prev[k]

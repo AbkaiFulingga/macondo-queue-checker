@@ -445,20 +445,30 @@
     const totalShips = ["shipped", "needs_changes", "rejected", "under_review",
                         "fraud_review", "second_pass"]
       .reduce((n, k) => n + (pipe[k] || 0), 0) || (s.meta.n_ships || null);
-    const totalLive = (s.meta && s.meta.n_live_projects_total) || null;
+    // Coverage is only measurable by a full ID sweep, so it is a dated
+    // measurement rather than a live number -- show the date, and say so
+    // plainly when it has not been measured yet instead of inventing a value.
+    const cov = (s.meta && s.meta.coverage) || null;
+    const totalLive = (cov && cov.live_projects_total) ||
+                      (s.meta && s.meta.n_live_projects_total) || null;
     const withShips = s.meta.n_projects || null;
     const decidedShips = (pipe.shipped || 0) + (pipe.rejected || 0) + (pipe.needs_changes || 0);
     const neverSubmitted = (totalLive != null && withShips != null) ? totalLive - withShips : null;
+    const covDate = cov && cov.measured_at ? cov.measured_at : null;
+    const covNote = covDate ? ` · measured ${covDate}` : "";
+    const covTip = cov
+      ? `Every live (non-deleted) project found by probing each project ID up to ${cov.max_live_pid ? cov.max_live_pid.toLocaleString() : "the current frontier"} (${cov.ids_probed ? cov.ids_probed.toLocaleString() : "?"} IDs, ${cov.deleted_or_unreachable ? cov.deleted_or_unreachable.toLocaleString() : "?"} deleted/empty). Measured ${covDate}.`
+      : "Not measured yet — needs a full ID sweep.";
     const queueShips = (q.ships || []).filter(x => !ACTIVE_TYPE || x.type === ACTIVE_TYPE);
     const distinctWaiting = new Set(queueShips.map(x => x.pid)).size || null;
     const bp = [
-      { v: totalLive != null ? totalLive.toLocaleString() : "12,210", k: "projects on Macondo", tip: "Every live (non-deleted) project, from our complete scan of all 17,451 project IDs." },
-      { v: neverSubmitted != null ? neverSubmitted.toLocaleString() : "≈8,350", k: "never submitted for review", tip: "Projects that exist but have never shipped anything. Most projects never get submitted — this is normal and they cost the queue nothing." },
-      { v: withShips != null ? withShips.toLocaleString() : "3,860", k: "submitted at least once", tip: "Projects with at least one ship in their history." },
-      { v: distinctWaiting || (b.queue_count != null ? b.queue_count : q.count), k: "projects in queue right now", tip: "Distinct projects with a ship currently awaiting review. Highlighted — this is the live line.", hot: true },
+      { v: totalLive != null ? totalLive.toLocaleString() : "—", k: "projects on Macondo", sub: covDate ? "all live projects" + covNote : "not measured yet", tip: covTip },
+      { v: neverSubmitted != null ? neverSubmitted.toLocaleString() : "—", k: "never submitted for review", sub: covDate ? "exist but never shipped a ship" + covNote : "not measured yet", tip: "Projects that exist but have never shipped anything. Most projects never get submitted — this is normal and they cost the queue nothing." },
+      { v: withShips != null ? withShips.toLocaleString() : "—", k: "submitted at least once", sub: "projects with at least one ship", tip: "Projects with at least one ship in their history. Counted from the ship records we collected, so this one is live, not sampled." },
+      { v: distinctWaiting || (b.queue_count != null ? b.queue_count : q.count), k: "projects in queue right now", sub: "waiting on a reviewer", tip: "Distinct projects with a ship currently awaiting review. Highlighted — this is the live line.", hot: true },
     ];
     $("bigpicture-cards").innerHTML = bp.map(x =>
-      `<div class="bp-card${x.hot ? " hot" : ""}"><div class="v">${x.v}</div><div class="k">${x.k}<i class="tip" tabindex="0" data-tip="${esc(x.tip)}"></i></div></div>`).join("");
+      `<div class="bp-card${x.hot ? " hot" : ""}"><div class="v">${x.v}</div><div class="k">${x.k}<i class="tip" tabindex="0" data-tip="${esc(x.tip)}"></i></div>${x.sub ? `<div class="sub">${esc(x.sub)}</div>` : ""}</div>`).join("");
 
     // funnel bar: every ship ever submitted, by current state
     if (totalShips) {

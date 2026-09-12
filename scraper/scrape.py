@@ -557,17 +557,39 @@ def run(args):
         "elapsed_s": round(time.time() - t0, 1),
     }
     if args.full_scan:
-        # IDs probed vs 404s → how many live projects Macondo has in total
-        snap["meta"]["n_ids_probed"] = frontier - args.from_id + 1
-        snap["meta"]["n_live_projects_total"] = max(0, snap["meta"]["n_ids_probed"] - fetch.n_err)
+        # IDs probed vs 404s → how many live projects Macondo has in total.
+        # Kept as a nested, dated block so the site can show WHEN coverage was
+        # measured instead of presenting a stale number as current.
+        probed = frontier - args.from_id + 1
+        snap["meta"]["coverage"] = {
+            "ids_probed": probed,
+            "live_projects_total": max(0, probed - fetch.n_err),
+            "deleted_or_unreachable": fetch.n_err,
+            "max_live_pid": frontier,
+            "measured_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "method": "full ID sweep",
+        }
     else:
-        # carry full-scan coverage numbers forward (only full scans measure them)
+        # only a full sweep measures these, so carry the last measurement
+        # forward intact (including its date) rather than losing it
         try:
             with open(out_path) as f:
-                prev_meta = json.load(f).get("meta", {})
-            for k in ("n_ids_probed", "n_deleted_or_unreachable", "n_live_projects_total"):
-                if k not in snap["meta"] and k in prev_meta:
-                    snap["meta"][k] = prev_meta[k]
+                prev = json.load(f).get("meta", {})
+            if prev.get("coverage"):
+                snap["meta"]["coverage"] = prev["coverage"]
+            # legacy flat keys, from before coverage became a dated block
+            legacy = {k: prev[k] for k in ("n_ids_probed", "n_live_projects_total",
+                                           "n_deleted_or_unreachable")
+                      if k in prev}
+            if legacy and not snap["meta"].get("coverage"):
+                snap["meta"]["coverage"] = {
+                    "ids_probed": legacy.get("n_ids_probed"),
+                    "live_projects_total": legacy.get("n_live_projects_total"),
+                    "deleted_or_unreachable": legacy.get("n_deleted_or_unreachable"),
+                    "max_live_pid": None,
+                    "measured_at": prev.get("coverage_scan_date"),
+                    "method": "full ID sweep",
+                }
         except (OSError, json.JSONDecodeError, AttributeError):
             pass
 

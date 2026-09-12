@@ -131,6 +131,7 @@ details.card > summary:hover { color: var(--accent); }
 .bp-card { background: var(--card2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
 .bp-card .v { font-size: 1.35rem; font-weight: 700; }
 .bp-card .k { color: var(--muted); font-size: 0.75rem; line-height: 1.35; margin-top: 2px; }
+.bp-card .sub { color: var(--muted); opacity: 0.75; font-size: 0.68rem; margin-top: 3px; line-height: 1.3; }
 .bp-card.hot { border-color: var(--accent); }
 .bp-card.hot .v { color: var(--accent); }
 .funnel { display: flex; height: 26px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); margin-bottom: 6px; }
